@@ -1,10 +1,10 @@
 # Stage 1: Dependencies
 FROM node:20-alpine AS deps
-RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
-RUN npm ci
+# Use npmmirror to avoid network timeouts on cloud servers
+RUN npm config set registry https://registry.npmmirror.com && npm ci
 
 # Stage 2: Builder
 FROM node:20-alpine AS builder
@@ -27,7 +27,7 @@ ENV HOSTNAME="0.0.0.0"
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
-# Create data directory for SQLite
+# Create data directory
 RUN mkdir -p /app/data && chown nextjs:nodejs /app/data
 
 # Copy built artifacts

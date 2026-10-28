@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: qr-studio-app
+    restart: unless-stopped
+    # 宿主机映射端口：可通过 .env 中的 APP_PORT 自定义（默认为 3001，避免与常见 3000/8080 冲突）
+    ports:
+      - '${APP_PORT:-3001}:3001'
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - DATABASE_PATH=/app/data/db.json
+    volumes:
+      # 持久化存储数据和上传的多媒体文件（即使容器更新或重建，数据永不丢失）
+      - ./data:/app/data

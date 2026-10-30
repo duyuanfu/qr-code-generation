@@ -1,4 +1,4 @@
-export type QRContentType = 'url' | 'text' | 'vcard' | 'wifi' | 'image' | 'video' | 'file';
+export type QRContentType = 'url' | 'text' | 'vcard' | 'wifi' | 'image' | 'video' | 'pdf' | 'file';
 
 export interface VCardData {
   firstName: string;

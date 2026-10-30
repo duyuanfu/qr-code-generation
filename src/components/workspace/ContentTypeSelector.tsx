@@ -1,5 +1,5 @@
 import React from 'react';
-import { Globe, FileText, Contact2, Wifi, Image as ImageIcon, Video, FileArchive } from 'lucide-react';
+import { Globe, FileText, Contact2, Wifi, Image as ImageIcon, Video, FileCheck, FileArchive } from 'lucide-react';
 import { QRContentType } from '@/types/qr';
 
 interface ContentTypeSelectorProps {
@@ -14,6 +14,7 @@ const CONTENT_TYPES: { id: QRContentType; label: string; icon: React.ComponentTy
   { id: 'wifi', label: 'WiFi网络', icon: Wifi },
   { id: 'image', label: '图片画廊', icon: ImageIcon, isDynamic: true },
   { id: 'video', label: '视频播放', icon: Video, isDynamic: true },
+  { id: 'pdf', label: 'PDF文档', icon: FileCheck, isDynamic: true },
   { id: 'file', label: '文件下载', icon: FileArchive, isDynamic: true },
 ];
 
@@ -28,11 +29,11 @@ export const ContentTypeSelector: React.FC<ContentTypeSelectorProps> = ({
           选择二维码类型
         </label>
         <span className="text-[11px] text-slate-400">
-          {['image', 'video', 'file'].includes(currentType) ? '活码 (带移动落地页)' : '静态码 (离线永久有效)'}
+          {['image', 'video', 'pdf', 'file'].includes(currentType) ? '活码 (带移动落地页)' : '静态码 (离线永久有效)'}
         </span>
       </div>
 
-      <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
+      <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
         {CONTENT_TYPES.map((item) => {
           const Icon = item.icon;
           const isSelected = currentType === item.id;

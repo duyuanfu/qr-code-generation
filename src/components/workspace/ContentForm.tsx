@@ -260,12 +260,18 @@ export const ContentForm: React.FC<ContentFormProps> = ({
         </div>
       )}
 
-      {/* 5. Multimedia (Image, Video, File) */}
-      {['image', 'video', 'file'].includes(type) && (
+      {/* 5. Multimedia (Image, Video, PDF, File) */}
+      {['image', 'video', 'pdf', 'file'].includes(type) && (
         <div className="flex flex-col gap-4">
           <div className="flex items-center justify-between">
             <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-              {type === 'image' ? '图片画廊' : type === 'video' ? '视频内容' : '附件文件'}落地页设置
+              {type === 'image'
+                ? '图片画廊'
+                : type === 'video'
+                ? '视频内容'
+                : type === 'pdf'
+                ? 'PDF专属文档'
+                : '附件文件'}落地页设置
             </Label>
             {dynamicShortCode && (
               <span className="flex items-center gap-1 text-xs text-emerald-600 font-medium">
@@ -277,7 +283,15 @@ export const ContentForm: React.FC<ContentFormProps> = ({
           <div>
             <Label className="text-xs text-slate-600 mb-1 block">标题 (展示在扫码落地页头部)</Label>
             <Input
-              placeholder={type === 'image' ? '如：2025年产品图集精选' : type === 'video' ? '如：公司宣传片及产品演示' : '如：项目白皮书与规格说明书'}
+              placeholder={
+                type === 'image'
+                  ? '如：2025年产品图集精选'
+                  : type === 'video'
+                  ? '如：公司宣传片及产品演示'
+                  : type === 'pdf'
+                  ? '如：公司简介与产品白皮书.pdf'
+                  : '如：项目资料包与规格说明书'
+              }
               value={mediaTitle}
               onChange={(e) => onMediaTitleChange(e.target.value)}
             />
@@ -286,7 +300,7 @@ export const ContentForm: React.FC<ContentFormProps> = ({
           <div>
             <Label className="text-xs text-slate-600 mb-1 block">介绍描述 (可选)</Label>
             <Input
-              placeholder="简要描述多媒体内容、下载须知或联系电话..."
+              placeholder={type === 'pdf' ? '简要描述文档核心内容，扫码即览无需下载...' : '简要描述多媒体内容、下载须知或联系电话...'}
               value={mediaDesc}
               onChange={(e) => onMediaDescChange(e.target.value)}
             />
@@ -296,15 +310,21 @@ export const ContentForm: React.FC<ContentFormProps> = ({
           <div className="relative flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-200 bg-slate-50/50 p-6 text-center hover:bg-slate-50 transition-colors">
             <UploadCloud className="h-8 w-8 text-blue-500 mb-2" />
             <p className="text-sm font-medium text-slate-700">
-              点击上传或拖拽{type === 'image' ? '多张图片' : type === 'video' ? '视频文件' : '文件'}至此处
+              点击上传或拖拽{type === 'image' ? '多张图片' : type === 'video' ? '视频文件' : type === 'pdf' ? 'PDF文档' : '文件'}至此处
             </p>
             <p className="text-xs text-slate-400 mt-1">
-              {type === 'image' ? '支持 JPG, PNG, WebP, GIF 多选上传' : type === 'video' ? '支持 MP4, WebM, MOV 流式视频' : '支持 PDF, Word, Excel, ZIP 等各类文档'}
+              {type === 'image'
+                ? '支持 JPG, PNG, WebP, GIF 多选上传'
+                : type === 'video'
+                ? '支持 MP4, WebM, MOV 流式视频'
+                : type === 'pdf'
+                ? '支持标准 .pdf 格式文档（扫码即直接进入全屏阅读预览）'
+                : '支持 Word, Excel, ZIP 等各类附件文档'}
             </p>
             <input
               type="file"
               multiple={type === 'image'}
-              accept={type === 'image' ? 'image/*' : type === 'video' ? 'video/*' : '*/*'}
+              accept={type === 'image' ? 'image/*' : type === 'video' ? 'video/*' : type === 'pdf' ? '.pdf,application/pdf' : '*/*'}
               onChange={handleFileUpload}
               className="absolute inset-0 cursor-pointer opacity-0"
             />

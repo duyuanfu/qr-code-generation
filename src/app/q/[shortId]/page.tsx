@@ -138,8 +138,8 @@ export default async function MobileLandingPage({ params }: Props) {
 
         {/* Dynamic Media Body */}
         <div className="p-5 flex flex-col gap-5">
-          {/* Images, Videos, or Files with PDF Online Preview */}
-          {(qr.contentType === 'image' || qr.contentType === 'video' || qr.contentType === 'file') && (
+          {/* Images, Videos, PDF Direct Reader, or Files */}
+          {(qr.contentType === 'image' || qr.contentType === 'video' || qr.contentType === 'pdf' || qr.contentType === 'file') && (
             <MediaViewer contentType={qr.contentType} mediaList={mediaList} />
           )}
 

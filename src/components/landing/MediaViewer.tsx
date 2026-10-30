@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Download, Film, Maximize2, X, ChevronLeft, ChevronRight, FileText, Eye, FileArchive } from 'lucide-react';
+import { Download, Film, Maximize2, X, ChevronLeft, ChevronRight, FileText, Eye, FileArchive, ExternalLink } from 'lucide-react';
 import { isPdfFile } from '@/lib/pdf-helpers';
 import { PdfViewerModal } from './PdfViewerModal';
 
@@ -14,7 +14,7 @@ interface MediaItem {
 }
 
 interface MediaViewerProps {
-  contentType: 'image' | 'video' | 'file';
+  contentType: 'image' | 'video' | 'pdf' | 'file';
   mediaList: MediaItem[];
 }
 
@@ -37,6 +37,8 @@ export const MediaViewer: React.FC<MediaViewerProps> = ({ contentType, mediaList
     }
     setActiveImageIdx(idx);
   };
+
+  const primaryPdf = mediaList[0];
 
   return (
     <div className="flex flex-col gap-4">
@@ -200,75 +202,86 @@ export const MediaViewer: React.FC<MediaViewerProps> = ({ contentType, mediaList
         </div>
       )}
 
-      {/* 3. Document / File Download & PDF Online Preview */}
+      {/* 3. Dedicated PDF Direct Reader View (扫开就是PDF预览页) */}
+      {contentType === 'pdf' && primaryPdf && (
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center justify-between text-xs text-slate-500 font-semibold uppercase tracking-wider">
+            <span>PDF 在线阅读</span>
+            <span className="text-[10px] text-red-600 font-bold bg-red-50 px-2 py-0.5 rounded-full">PDF 文档</span>
+          </div>
+
+          {/* Embedded Full Height Reader Frame */}
+          <div className="relative rounded-2xl overflow-hidden border border-slate-200 bg-slate-100 shadow-sm flex flex-col h-[65vh] min-h-[460px]">
+            <iframe
+              src={`${primaryPdf.url}#toolbar=1&navpanes=0&scrollbar=1`}
+              className="w-full h-full border-none bg-white"
+              title={primaryPdf.name}
+            />
+
+            {/* Bottom Quick Action Bar for PDF */}
+            <div className="shrink-0 flex items-center justify-between p-3 bg-white border-t border-slate-200">
+              <div className="flex items-center gap-2 truncate pr-2">
+                <FileText className="h-4 w-4 text-red-600 shrink-0" />
+                <span className="text-xs font-semibold text-slate-800 truncate">{primaryPdf.name}</span>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => setPreviewPdfItem(primaryPdf)}
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 px-2.5 py-1.5 rounded-lg transition-colors"
+                >
+                  <Maximize2 className="h-3.5 w-3.5" />
+                  全屏
+                </button>
+                <a
+                  href={primaryPdf.url}
+                  download={primaryPdf.name}
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-lg shadow-sm transition-all"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  下载
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 4. Document / Generic File Download */}
       {contentType === 'file' && (
         <div className="flex flex-col gap-3">
           <div className="flex items-center justify-between text-xs text-slate-500 font-semibold uppercase tracking-wider">
-            <span>附件资料列表 ({mediaList.length})</span>
-            <span className="text-[10px] text-blue-600 font-normal">支持 PDF 在线免下载阅读</span>
+            <span>附件资料下载 ({mediaList.length})</span>
           </div>
 
           <div className="flex flex-col gap-2.5">
-            {mediaList.map((item, idx) => {
-              const isPdf = isPdfFile(item);
-
-              return (
-                <div
-                  key={idx}
-                  className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50/70 p-3.5 shadow-sm hover:bg-slate-50 transition-colors"
-                >
-                  <div className="flex items-center gap-3 overflow-hidden pr-2">
-                    <div
-                      className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ${
-                        isPdf ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'
-                      }`}
-                    >
-                      {isPdf ? <FileText className="h-5 w-5" /> : <FileArchive className="h-5 w-5" />}
-                    </div>
-                    <div className="truncate">
-                      <div className="flex items-center gap-1.5">
-                        <p className="text-xs font-semibold text-slate-800 truncate">{item.name}</p>
-                        {isPdf && (
-                          <span className="rounded bg-red-100 px-1 py-0.2 text-[9px] font-bold text-red-600 shrink-0">
-                            PDF
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-[10px] text-slate-400 mt-0.5">
-                        {item.size ? `${(item.size / 1024 / 1024).toFixed(2)} MB` : '文件资源'}
-                      </p>
-                    </div>
+            {mediaList.map((item, idx) => (
+              <div
+                key={idx}
+                className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50/70 p-3.5 shadow-sm hover:bg-slate-50 transition-colors"
+              >
+                <div className="flex items-center gap-3 overflow-hidden pr-2">
+                  <div className="h-10 w-10 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center shrink-0">
+                    <FileArchive className="h-5 w-5" />
                   </div>
-
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    {/* PDF Online Preview Button */}
-                    {isPdf && (
-                      <button
-                        onClick={() => setPreviewPdfItem(item)}
-                        className="inline-flex items-center gap-1 rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 active:scale-95 transition-all"
-                      >
-                        <Eye className="h-3.5 w-3.5" />
-                        预览
-                      </button>
-                    )}
-
-                    {/* Download Button */}
-                    <a
-                      href={item.url}
-                      download={item.name}
-                      className={`inline-flex items-center gap-1 rounded-xl px-3 py-1.5 text-xs font-semibold transition-all ${
-                        isPdf
-                          ? 'bg-slate-200/80 text-slate-700 hover:bg-slate-300'
-                          : 'bg-blue-600 text-white shadow-sm hover:bg-blue-700 active:scale-95'
-                      }`}
-                    >
-                      <Download className="h-3.5 w-3.5" />
-                      下载
-                    </a>
+                  <div className="truncate">
+                    <p className="text-xs font-semibold text-slate-800 truncate">{item.name}</p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">
+                      {item.size ? `${(item.size / 1024 / 1024).toFixed(2)} MB` : '文件资源'}
+                    </p>
                   </div>
                 </div>
-              );
-            })}
+
+                <a
+                  href={item.url}
+                  download={item.name}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 active:scale-95 shrink-0"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  下载
+                </a>
+              </div>
+            ))}
           </div>
         </div>
       )}

@@ -113,7 +113,7 @@ export default function Home() {
 
   // Derive QR Raw Value
   const qrRawValue = useMemo(() => {
-    if (['image', 'video', 'file'].includes(contentType)) {
+    if (['image', 'video', 'pdf', 'file'].includes(contentType)) {
       if (dynamicShortCode) {
         return `${baseHost}/q/${dynamicShortCode}`;
       }
@@ -182,7 +182,7 @@ export default function Home() {
               />
 
               {/* Notice & Setting for Mobile Scanning of Dynamic QRs */}
-              {['image', 'video', 'file'].includes(contentType) && (
+              {['image', 'video', 'pdf', 'file'].includes(contentType) && (
                 <div className="rounded-2xl border border-blue-200 bg-white p-5 shadow-sm flex flex-col gap-3">
                   <div className="flex items-center justify-between">
                     <span className="font-bold text-sm text-slate-800 flex items-center gap-2">

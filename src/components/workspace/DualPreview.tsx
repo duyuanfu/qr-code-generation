@@ -155,23 +155,54 @@ export const DualPreview: React.FC<DualPreviewProps> = ({
                   </div>
                 )}
 
+                {/* PDF Dedicated Reader Preview */}
+                {contentType === 'pdf' && (
+                  <div className="flex flex-col gap-2">
+                    {mediaList.length > 0 ? (
+                      <div className="flex flex-col rounded-xl border border-slate-200 bg-white overflow-hidden shadow-xs">
+                        <div className="bg-slate-100 p-2 flex items-center justify-between border-b border-slate-200 text-[10px]">
+                          <span className="font-semibold text-slate-700 truncate max-w-[140px] flex items-center gap-1">
+                            <FileText className="h-3.5 w-3.5 text-red-600" />
+                            {mediaList[0].name}
+                          </span>
+                          <span className="text-[9px] bg-red-100 text-red-600 font-bold px-1.5 py-0.5 rounded">PDF</span>
+                        </div>
+                        <div className="h-44 bg-slate-50 flex flex-col items-center justify-center p-3 text-center border-b border-slate-100">
+                          <FileText className="h-10 w-10 text-red-400 mb-1" />
+                          <span className="text-[10px] text-slate-500 font-medium">扫码直接进入此全屏 PDF 翻阅页面</span>
+                          <span className="text-[9px] text-slate-400 mt-0.5">支持手势缩放、高清翻页与在线下载</span>
+                        </div>
+                        <div className="p-2 flex items-center justify-end gap-1.5 bg-white">
+                          <button
+                            onClick={() => setPreviewPdfItem(mediaList[0])}
+                            className="rounded bg-blue-600 px-2 py-1 text-[10px] text-white hover:bg-blue-700"
+                          >
+                            电脑全屏预览
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex h-28 flex-col items-center justify-center rounded-xl bg-slate-50 text-slate-400 border border-dashed border-slate-200">
+                        <FileText className="h-8 w-8 mb-1 text-red-300" />
+                        <span className="text-[11px] font-medium text-slate-600">请上传 PDF 文档</span>
+                        <span className="text-[9px] text-slate-400 mt-0.5">扫码将直接呈现此 PDF 完整阅读页</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {contentType === 'file' && (
                   <div className="flex flex-col gap-2">
                     {mediaList.length > 0 ? (
                       mediaList.map((m) => {
-                        const isPdf = isPdfFile(m);
                         return (
                           <div
                             key={m.id}
                             className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-2.5"
                           >
                             <div className="flex items-center gap-2 overflow-hidden pr-1">
-                              <div
-                                className={`h-7 w-7 rounded-lg flex items-center justify-center shrink-0 ${
-                                  isPdf ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'
-                                }`}
-                              >
-                                {isPdf ? <FileText className="h-4 w-4" /> : <FileArchive className="h-4 w-4" />}
+                              <div className="h-7 w-7 rounded-lg flex items-center justify-center shrink-0 bg-blue-100 text-blue-600">
+                                <FileArchive className="h-4 w-4" />
                               </div>
                               <div className="truncate">
                                 <p className="font-semibold truncate text-[11px]">{m.name}</p>
@@ -180,33 +211,19 @@ export const DualPreview: React.FC<DualPreviewProps> = ({
                                 </p>
                               </div>
                             </div>
-                            <div className="flex items-center gap-1 shrink-0">
-                              {isPdf && (
-                                <button
-                                  onClick={() => setPreviewPdfItem(m)}
-                                  className="rounded bg-blue-600 px-2 py-1 text-[10px] text-white hover:bg-blue-700 transition-colors"
-                                >
-                                  预览
-                                </button>
-                              )}
-                              <a
-                                href={m.url}
-                                download={m.name}
-                                className={`rounded px-2 py-1 text-[10px] transition-colors ${
-                                  isPdf
-                                    ? 'bg-slate-200 text-slate-700 hover:bg-slate-300'
-                                    : 'bg-blue-600 text-white hover:bg-blue-700'
-                                }`}
-                              >
-                                下载
-                              </a>
-                            </div>
+                            <a
+                              href={m.url}
+                              download={m.name}
+                              className="rounded px-2.5 py-1 text-[10px] bg-blue-600 text-white hover:bg-blue-700"
+                            >
+                              下载
+                            </a>
                           </div>
                         );
                       })
                     ) : (
                       <div className="flex h-24 flex-col items-center justify-center rounded-xl bg-slate-50 text-slate-400 border border-dashed border-slate-200">
-                        <FileText className="h-6 w-6 mb-1 text-slate-300" />
+                        <FileArchive className="h-6 w-6 mb-1 text-slate-300" />
                         <span>暂无附件文件</span>
                       </div>
                     )}

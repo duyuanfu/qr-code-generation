@@ -42,6 +42,7 @@ export const QRCodeCanvas: React.FC<QRCodeCanvasProps> = ({
         data: toQRCodeUTF8(value || 'https://example.com'),
         margin: config.margin ?? 16,
         qrOptions: {
+          typeNumber: config.densityLevel || 0,
           errorCorrectionLevel: config.logo?.src ? 'H' : config.errorCorrectionLevel || 'Q',
         },
         dotsOptions: {

@@ -4,6 +4,7 @@ export const DEFAULT_STYLE_CONFIG: QRCodeStyleConfig = {
   size: 320,
   margin: 16,
   errorCorrectionLevel: 'Q',
+  densityLevel: 0, // 0 for auto
   dots: {
     type: 'rounded',
     colorType: 'single',

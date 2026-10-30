@@ -47,6 +47,7 @@ export interface QRCodeStyleConfig {
   size: number;
   margin: number;
   errorCorrectionLevel: 'L' | 'M' | 'Q' | 'H';
+  densityLevel?: number; // 0 (auto), 5 (标准), 7 (密集), 10 (高密), 14 (超高密)
   dots: {
     type: DotType;
     colorType: 'single' | 'gradient';

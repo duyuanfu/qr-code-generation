@@ -166,29 +166,58 @@ export const StyleConfigPanel: React.FC<StyleConfigPanelProps> = ({ config, onCh
         {/* 2. Dots */}
         {activeTab === 'dots' && (
           <div className="flex flex-col gap-4">
-            <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-              数据码点几何造型
-            </Label>
-            <div className="grid grid-cols-3 gap-2">
-              {[
-                { id: 'square', label: '经典方块' },
-                { id: 'rounded', label: '柔和圆角' },
-                { id: 'dots', label: '圆润点阵' },
-                { id: 'classy', label: '商务流线' },
-                { id: 'extra-rounded', label: '大圆角' },
-              ].map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => updateDots({ type: item.id as DotType })}
-                  className={`rounded-xl border p-3 text-xs font-medium transition-all ${
-                    config.dots.type === item.id
-                      ? 'border-blue-600 bg-blue-50 text-blue-700 font-semibold ring-1 ring-blue-600'
-                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                  }`}
-                >
-                  {item.label}
-                </button>
-              ))}
+            <div>
+              <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2 block">
+                点阵格子密度 (版本粒度)
+              </Label>
+              <div className="grid grid-cols-4 gap-2">
+                {[
+                  { id: 0, label: '自动适应', desc: '根据内容' },
+                  { id: 6, label: '细腻紧凑', desc: '41×41格' },
+                  { id: 9, label: '密集科技', desc: '53×53格' },
+                  { id: 13, label: '超高密点阵', desc: '69×69格' },
+                ].map((item) => (
+                  <button
+                    key={item.id}
+                    onClick={() => onChange({ ...config, densityLevel: item.id })}
+                    className={`rounded-xl border p-2.5 text-xs text-left transition-all ${
+                      (config.densityLevel || 0) === item.id
+                        ? 'border-blue-600 bg-blue-50 text-blue-700 font-semibold ring-1 ring-blue-600'
+                        : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="font-semibold">{item.label}</div>
+                    <div className="text-[10px] text-slate-400 mt-0.5">{item.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2 block">
+                数据码点几何造型
+              </Label>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { id: 'square', label: '经典方块' },
+                  { id: 'rounded', label: '柔和圆角' },
+                  { id: 'dots', label: '圆润点阵' },
+                  { id: 'classy', label: '商务流线' },
+                  { id: 'extra-rounded', label: '大圆角' },
+                ].map((item) => (
+                  <button
+                    key={item.id}
+                    onClick={() => updateDots({ type: item.id as DotType })}
+                    className={`rounded-xl border p-3 text-xs font-medium transition-all ${
+                      config.dots.type === item.id
+                        ? 'border-blue-600 bg-blue-50 text-blue-700 font-semibold ring-1 ring-blue-600'
+                        : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         )}

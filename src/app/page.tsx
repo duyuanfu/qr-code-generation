@@ -73,7 +73,7 @@ export default function Home() {
   const [styleConfig, setStyleConfig] = useState<QRCodeStyleConfig>(DEFAULT_STYLE_CONFIG);
 
   // Dynamic QR Save Handler
-  const handleSaveDynamic = async (itemsToSave: MediaItem[] = mediaList) => {
+  const handleSaveDynamic = async (itemsToSave: MediaItem[] = mediaList, targetType: QRContentType = contentType) => {
     if (itemsToSave.length === 0) return;
     setIsSavingDynamic(true);
     try {
@@ -81,7 +81,7 @@ export default function Home() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contentType,
+          contentType: targetType,
           title: mediaTitle,
           description: mediaDesc,
           mediaUrls: itemsToSave,
@@ -151,6 +151,9 @@ export default function Home() {
                 onSelectType={(t) => {
                   setContentType(t);
                   setDynamicShortCode('');
+                  if (mediaList.length > 0) {
+                    handleSaveDynamic(mediaList, t);
+                  }
                 }}
               />
 
@@ -173,10 +176,10 @@ export default function Home() {
                 onMediaListChange={(items) => {
                   setMediaList(items);
                   if (items.length > 0) {
-                    handleSaveDynamic(items);
+                    handleSaveDynamic(items, contentType);
                   }
                 }}
-                onDynamicSave={() => handleSaveDynamic(mediaList)}
+                onDynamicSave={() => handleSaveDynamic(mediaList, contentType)}
                 isSavingDynamic={isSavingDynamic}
                 dynamicShortCode={dynamicShortCode}
               />

@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import { db, dynamicQrs, scanLogs, eq } from '@/db';
 import { nanoid } from 'nanoid';
 import { headers } from 'next/headers';
-import { Download, Film, FileText, CheckCircle2, ShieldCheck, QrCode, AlertCircle, Sparkles } from 'lucide-react';
+import { ShieldCheck, QrCode, AlertCircle } from 'lucide-react';
 import { MediaViewer } from '@/components/landing/MediaViewer';
 import { ShareButton } from '@/components/landing/ShareButton';
 import type { Metadata } from 'next';
@@ -43,16 +43,16 @@ export default async function MobileLandingPage({ params }: Props) {
     qr = {
       id: 'preview',
       shortCode: 'preview',
-      contentType: 'image',
-      title: '多媒体扫码落地页 (预览演示)',
-      description: '这是系统的扫码预览界面。请在电脑端上传您的实际图片、视频或文件后点击生成专属活码。',
+      contentType: 'pdf',
+      title: '产品白皮书与规格说明',
+      description: '这是系统的扫码预览界面。',
       mediaUrls: JSON.stringify([
         {
           id: 'demo-1',
-          name: '示例展示图.jpg',
-          url: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80',
-          size: 1024 * 1024 * 1.5,
-          type: 'image/jpeg',
+          name: '演示文档.pdf',
+          url: 'https://raw.githubusercontent.com/mozilla/pdf.js/ba2edeae/web/compressed.tracemonkey-pldi-09.pdf',
+          size: 1024 * 1024 * 1.2,
+          type: 'application/pdf',
         },
       ]),
     };
@@ -117,6 +117,23 @@ export default async function MobileLandingPage({ params }: Props) {
     }
   }
 
+  const isPdfType = qr.contentType === 'pdf';
+  const primaryPdf = isPdfType ? mediaList[0] : null;
+
+  // 1. Dedicated ultra-minimalist full-width PDF Reader Page
+  if (isPdfType && primaryPdf) {
+    return (
+      <main className="fixed inset-0 w-screen h-screen bg-slate-900 flex flex-col overflow-hidden">
+        <iframe
+          src={`${primaryPdf.url}#toolbar=0&navpanes=0&scrollbar=1&view=FitH`}
+          className="w-full flex-1 border-none bg-white"
+          title={primaryPdf.name || qr.title}
+        />
+      </main>
+    );
+  }
+
+  // 2. Standard landing page for Image / Video / File
   return (
     <main className="min-h-screen bg-slate-100 flex flex-col justify-between items-center p-4 sm:p-6">
       <div className="w-full max-w-md bg-white rounded-3xl shadow-xl overflow-hidden border border-slate-200/80 my-auto">
@@ -138,10 +155,7 @@ export default async function MobileLandingPage({ params }: Props) {
 
         {/* Dynamic Media Body */}
         <div className="p-5 flex flex-col gap-5">
-          {/* Images, Videos, PDF Direct Reader, or Files */}
-          {(qr.contentType === 'image' || qr.contentType === 'video' || qr.contentType === 'pdf' || qr.contentType === 'file') && (
-            <MediaViewer contentType={qr.contentType} mediaList={mediaList} />
-          )}
+          <MediaViewer contentType={qr.contentType} mediaList={mediaList} />
 
           {/* Share button */}
           <div className="pt-2 border-t border-slate-100 flex items-center justify-center">

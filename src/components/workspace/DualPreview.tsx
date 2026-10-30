@@ -157,35 +157,18 @@ export const DualPreview: React.FC<DualPreviewProps> = ({
 
                 {/* PDF Dedicated Reader Preview */}
                 {contentType === 'pdf' && (
-                  <div className="flex flex-col gap-2">
+                  <div className="flex flex-col h-[380px] -mx-4 -mt-2 -mb-6 bg-slate-900 rounded-b-2xl overflow-hidden">
                     {mediaList.length > 0 ? (
-                      <div className="flex flex-col rounded-xl border border-slate-200 bg-white overflow-hidden shadow-xs">
-                        <div className="bg-slate-100 p-2 flex items-center justify-between border-b border-slate-200 text-[10px]">
-                          <span className="font-semibold text-slate-700 truncate max-w-[140px] flex items-center gap-1">
-                            <FileText className="h-3.5 w-3.5 text-red-600" />
-                            {mediaList[0].name}
-                          </span>
-                          <span className="text-[9px] bg-red-100 text-red-600 font-bold px-1.5 py-0.5 rounded">PDF</span>
-                        </div>
-                        <div className="h-44 bg-slate-50 flex flex-col items-center justify-center p-3 text-center border-b border-slate-100">
-                          <FileText className="h-10 w-10 text-red-400 mb-1" />
-                          <span className="text-[10px] text-slate-500 font-medium">扫码直接进入此全屏 PDF 翻阅页面</span>
-                          <span className="text-[9px] text-slate-400 mt-0.5">支持手势缩放、高清翻页与在线下载</span>
-                        </div>
-                        <div className="p-2 flex items-center justify-end gap-1.5 bg-white">
-                          <button
-                            onClick={() => setPreviewPdfItem(mediaList[0])}
-                            className="rounded bg-blue-600 px-2 py-1 text-[10px] text-white hover:bg-blue-700"
-                          >
-                            电脑全屏预览
-                          </button>
-                        </div>
-                      </div>
+                      <iframe
+                        src={`${mediaList[0].url}#toolbar=0&navpanes=0&scrollbar=1&view=FitH`}
+                        className="w-full h-full border-none bg-white"
+                        title={mediaList[0].name}
+                      />
                     ) : (
-                      <div className="flex h-28 flex-col items-center justify-center rounded-xl bg-slate-50 text-slate-400 border border-dashed border-slate-200">
-                        <FileText className="h-8 w-8 mb-1 text-red-300" />
-                        <span className="text-[11px] font-medium text-slate-600">请上传 PDF 文档</span>
-                        <span className="text-[9px] text-slate-400 mt-0.5">扫码将直接呈现此 PDF 完整阅读页</span>
+                      <div className="flex h-full flex-col items-center justify-center p-4 text-slate-400 bg-slate-900 text-center">
+                        <FileText className="h-10 w-10 mb-2 text-red-400" />
+                        <span className="text-xs font-semibold text-white">请在左侧上传 PDF 文档</span>
+                        <span className="text-[10px] text-slate-400 mt-1">手机扫码将 100% 满屏全宽呈现该文档</span>
                       </div>
                     )}
                   </div>

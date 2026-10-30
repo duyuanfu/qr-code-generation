@@ -6,6 +6,7 @@ import { headers } from 'next/headers';
 import { ShieldCheck, QrCode, AlertCircle } from 'lucide-react';
 import { MediaViewer } from '@/components/landing/MediaViewer';
 import { ShareButton } from '@/components/landing/ShareButton';
+import { isPdfFile } from '@/lib/pdf-helpers';
 import type { Metadata } from 'next';
 
 interface Props {
@@ -17,8 +18,8 @@ interface Props {
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   if (params.shortId === 'preview') {
     return {
-      title: '落地页效果预览 - QR Studio',
-      description: '扫码落地页预览演示',
+      title: 'PDF 预览 - QR Studio',
+      description: '扫码文档直接查看',
     };
   }
 
@@ -26,15 +27,14 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   if (!qr) return { title: '二维码未找到' };
 
   return {
-    title: `${qr.title} - QR Studio`,
-    description: qr.description || '点击查看详情与附件内容',
+    title: qr.title || 'PDF 预览',
+    description: qr.description || '',
   };
 }
 
 export default async function MobileLandingPage({ params }: Props) {
   const shortCode = params.shortId;
 
-  // Handle preview mode gracefully
   let qr: any;
   let isPreview = false;
 
@@ -44,8 +44,8 @@ export default async function MobileLandingPage({ params }: Props) {
       id: 'preview',
       shortCode: 'preview',
       contentType: 'pdf',
-      title: '产品白皮书与规格说明',
-      description: '这是系统的扫码预览界面。',
+      title: '演示文档.pdf',
+      description: '',
       mediaUrls: JSON.stringify([
         {
           id: 'demo-1',
@@ -69,14 +69,8 @@ export default async function MobileLandingPage({ params }: Props) {
           </div>
           <h2 className="text-lg font-bold text-slate-800">未找到该二维码内容</h2>
           <p className="text-xs text-slate-500 mt-2 leading-relaxed">
-            该二维码可能尚未在电脑端保存生成，或链接已失效。请核对电脑端的活码状态。
+            该二维码可能尚未在电脑端保存生成，或链接已失效。
           </p>
-          <a
-            href="/"
-            className="mt-6 w-full rounded-xl bg-blue-600 py-2.5 text-xs font-semibold text-white shadow-md hover:bg-blue-700 transition-all"
-          >
-            返回制作工作台
-          </a>
         </div>
       </main>
     );
@@ -117,57 +111,41 @@ export default async function MobileLandingPage({ params }: Props) {
     }
   }
 
-  const isPdfType = qr.contentType === 'pdf';
-  const primaryPdf = isPdfType ? mediaList[0] : null;
+  // 核心：只要是 pdf 类型，或者上传的文件中包含 pdf，直接整个屏幕全屏纯净展示该 PDF
+  // 零边距、零顶部背景、零底部按钮、宽度 100% 贴满手机屏幕
+  const pdfItem = qr.contentType === 'pdf' 
+    ? mediaList[0] 
+    : mediaList.find((m: any) => isPdfFile(m));
 
-  // 1. Dedicated ultra-minimalist full-width PDF Reader Page
-  if (isPdfType && primaryPdf) {
+  if (pdfItem) {
     return (
-      <main className="fixed inset-0 w-screen h-screen bg-slate-900 flex flex-col overflow-hidden">
+      <main className="fixed inset-0 m-0 p-0 w-screen h-screen bg-white overflow-hidden z-50">
         <iframe
-          src={`${primaryPdf.url}#toolbar=0&navpanes=0&scrollbar=1&view=FitH`}
-          className="w-full flex-1 border-none bg-white"
-          title={primaryPdf.name || qr.title}
+          src={`${pdfItem.url}#toolbar=0&navpanes=0&scrollbar=1&view=FitH`}
+          className="w-full h-full border-none m-0 p-0 block bg-white"
+          style={{ width: '100vw', height: '100vh' }}
+          title={pdfItem.name || qr.title}
         />
       </main>
     );
   }
 
-  // 2. Standard landing page for Image / Video / File
+  // 其他类型（图片/视频/通用文件）的常规兜底展现
   return (
     <main className="min-h-screen bg-slate-100 flex flex-col justify-between items-center p-4 sm:p-6">
       <div className="w-full max-w-md bg-white rounded-3xl shadow-xl overflow-hidden border border-slate-200/80 my-auto">
-        {/* Header */}
-        <div className="bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-600 p-6 text-white text-center relative overflow-hidden">
-          <div className="absolute -top-10 -right-10 w-32 h-32 bg-white/10 rounded-full blur-xl pointer-events-none" />
-          <div className="inline-flex items-center justify-center h-12 w-12 rounded-2xl bg-white/20 backdrop-blur mb-3 shadow-inner">
+        <div className="bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-600 p-6 text-white text-center">
+          <div className="inline-flex items-center justify-center h-12 w-12 rounded-2xl bg-white/20 backdrop-blur mb-3">
             <QrCode className="h-6 w-6 text-white" />
           </div>
           <h1 className="text-lg font-bold tracking-tight text-white">{qr.title}</h1>
-          {qr.description && (
-            <p className="text-xs text-white/80 mt-1.5 leading-relaxed">{qr.description}</p>
-          )}
-          <div className="mt-3 inline-flex items-center gap-1 text-[11px] bg-white/15 px-3 py-1 rounded-full text-white/90">
-            <ShieldCheck className="h-3.5 w-3.5 text-emerald-300" />
-            <span>官方认证安全链接 · 永久有效</span>
-          </div>
         </div>
 
-        {/* Dynamic Media Body */}
         <div className="p-5 flex flex-col gap-5">
           <MediaViewer contentType={qr.contentType} mediaList={mediaList} />
-
-          {/* Share button */}
           <div className="pt-2 border-t border-slate-100 flex items-center justify-center">
             <ShareButton title={qr.title} description={qr.description} />
           </div>
-        </div>
-
-        {/* Footer */}
-        <div className="bg-slate-50 p-4 text-center border-t border-slate-100 text-[11px] text-slate-400">
-          <span>由 </span>
-          <span className="font-semibold text-slate-600">QR Studio</span>
-          <span> 提供技术支持 · 不限扫码次数</span>
         </div>
       </div>
     </main>

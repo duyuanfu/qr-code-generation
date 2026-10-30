@@ -6,16 +6,16 @@ export const DEFAULT_STYLE_CONFIG: QRCodeStyleConfig = {
   errorCorrectionLevel: 'Q',
   densityLevel: 0, // 0 for auto
   dots: {
-    type: 'rounded',
+    type: 'square',
     colorType: 'single',
     color: '#0f172a',
   },
   cornersSquare: {
-    type: 'extra-rounded',
+    type: 'square',
     color: '#0f172a',
   },
   cornersDot: {
-    type: 'dot',
+    type: 'square',
     color: '#0f172a',
   },
   background: {

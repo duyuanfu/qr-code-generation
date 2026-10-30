@@ -14,9 +14,37 @@ export const StyleConfigPanel: React.FC<StyleConfigPanelProps> = ({ config, onCh
   const [activeTab, setActiveTab] = useState<'templates' | 'dots' | 'eyes' | 'colors' | 'logo' | 'frame'>('templates');
 
   const updateDots = (updates: Partial<QRCodeStyleConfig['dots']>) => {
+    const nextDotType = updates.type || config.dots.type;
+
+    // 智能联动寻象码眼（左上、左下、右上角的三个角图形）
+    let autoCornersSquare: CornerSquareType = config.cornersSquare.type;
+    let autoCornersDot: CornerDotType = config.cornersDot.type;
+
+    if (updates.type) {
+      if (nextDotType === 'square') {
+        // 经典方格情况下，码眼外框和内芯应该也是正方形状
+        autoCornersSquare = 'square';
+        autoCornersDot = 'square';
+      } else if (nextDotType === 'dots') {
+        // 圆润点阵时，码眼外框为圆圈、内芯为圆点
+        autoCornersSquare = 'dot';
+        autoCornersDot = 'dot';
+      } else if (nextDotType === 'rounded' || nextDotType === 'classy') {
+        // 柔和圆角时，码眼外框为圆角，内芯为圆点
+        autoCornersSquare = 'extra-rounded';
+        autoCornersDot = 'dot';
+      } else if (nextDotType === 'extra-rounded') {
+        // 大圆角时，码眼外框大圆角，内芯圆点
+        autoCornersSquare = 'extra-rounded';
+        autoCornersDot = 'dot';
+      }
+    }
+
     onChange({
       ...config,
       dots: { ...config.dots, ...updates },
+      cornersSquare: { ...config.cornersSquare, type: autoCornersSquare },
+      cornersDot: { ...config.cornersDot, type: autoCornersDot },
     });
   };
 

@@ -7,6 +7,7 @@ import { ShieldCheck, QrCode, AlertCircle } from 'lucide-react';
 import { MediaViewer } from '@/components/landing/MediaViewer';
 import { ShareButton } from '@/components/landing/ShareButton';
 import { isPdfFile } from '@/lib/pdf-helpers';
+import { MobilePdfCanvasViewer } from '@/components/landing/MobilePdfCanvasViewer';
 import type { Metadata } from 'next';
 
 interface Props {
@@ -119,13 +120,8 @@ export default async function MobileLandingPage({ params }: Props) {
 
   if (pdfItem) {
     return (
-      <main className="fixed inset-0 m-0 p-0 w-screen h-screen bg-white overflow-hidden z-50">
-        <iframe
-          src={`${pdfItem.url}#toolbar=0&navpanes=0&scrollbar=1&view=FitH`}
-          className="w-full h-full border-none m-0 p-0 block bg-white"
-          style={{ width: '100vw', height: '100vh' }}
-          title={pdfItem.name || qr.title}
-        />
+      <main className="min-h-screen w-full bg-white m-0 p-0 overflow-x-hidden">
+        <MobilePdfCanvasViewer pdfUrl={pdfItem.url} />
       </main>
     );
   }

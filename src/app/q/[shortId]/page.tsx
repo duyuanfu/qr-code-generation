@@ -138,46 +138,9 @@ export default async function MobileLandingPage({ params }: Props) {
 
         {/* Dynamic Media Body */}
         <div className="p-5 flex flex-col gap-5">
-          {/* Images or Videos */}
-          {(qr.contentType === 'image' || qr.contentType === 'video') && (
+          {/* Images, Videos, or Files with PDF Online Preview */}
+          {(qr.contentType === 'image' || qr.contentType === 'video' || qr.contentType === 'file') && (
             <MediaViewer contentType={qr.contentType} mediaList={mediaList} />
-          )}
-
-          {/* 3. Document / File Download */}
-          {qr.contentType === 'file' && (
-            <div className="flex flex-col gap-3">
-              <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                附件资料下载 ({mediaList.length})
-              </h2>
-              <div className="flex flex-col gap-2.5">
-                {mediaList.map((item, idx) => (
-                  <div
-                    key={idx}
-                    className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50/70 p-3.5 shadow-sm hover:bg-slate-50 transition-colors"
-                  >
-                    <div className="flex items-center gap-3 overflow-hidden">
-                      <div className="h-10 w-10 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center shrink-0">
-                        <FileText className="h-5 w-5" />
-                      </div>
-                      <div className="truncate">
-                        <p className="text-xs font-semibold text-slate-800 truncate">{item.name}</p>
-                        <p className="text-[10px] text-slate-400">
-                          {item.size ? `${(item.size / 1024 / 1024).toFixed(2)} MB` : '文件资源'}
-                        </p>
-                      </div>
-                    </div>
-                    <a
-                      href={item.url}
-                      download={item.name}
-                      className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 active:bg-blue-800 shrink-0"
-                    >
-                      <Download className="h-3.5 w-3.5" />
-                      下载
-                    </a>
-                  </div>
-                ))}
-              </div>
-            </div>
           )}
 
           {/* Share button */}

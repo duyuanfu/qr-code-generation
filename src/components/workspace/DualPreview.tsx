@@ -4,8 +4,10 @@ import React, { useState } from 'react';
 import { QRCodeStyleConfig, QRContentType, MediaItem } from '@/types/qr';
 import { QRCodeCanvas } from '@/components/qr/QRCodeCanvas';
 import { downloadQRCode, copyQRCodeToClipboard } from '@/lib/qr-export';
-import { QrCode, Smartphone, Download, Copy, Check, Printer, FileText, Film, Image as ImageIcon } from 'lucide-react';
+import { QrCode, Smartphone, Download, Copy, Check, Printer, FileText, Film, Image as ImageIcon, Eye, FileArchive } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { isPdfFile } from '@/lib/pdf-helpers';
+import { PdfViewerModal } from '@/components/landing/PdfViewerModal';
 
 interface DualPreviewProps {
   value: string;
@@ -29,6 +31,7 @@ export const DualPreview: React.FC<DualPreviewProps> = ({
   const [qrInstance, setQrInstance] = useState<any>(null);
   const [copied, setCopied] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [previewPdfItem, setPreviewPdfItem] = useState<MediaItem | null>(null);
 
   const isDynamic = ['image', 'video', 'file'].includes(contentType);
 
@@ -155,25 +158,52 @@ export const DualPreview: React.FC<DualPreviewProps> = ({
                 {contentType === 'file' && (
                   <div className="flex flex-col gap-2">
                     {mediaList.length > 0 ? (
-                      mediaList.map((m) => (
-                        <div
-                          key={m.id}
-                          className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-2.5"
-                        >
-                          <div className="flex items-center gap-2 overflow-hidden">
-                            <FileText className="h-5 w-5 text-blue-600 shrink-0" />
-                            <div className="truncate">
-                              <p className="font-semibold truncate">{m.name}</p>
-                              <p className="text-[9px] text-slate-400">
-                                {(m.size / 1024 / 1024).toFixed(1)} MB
-                              </p>
+                      mediaList.map((m) => {
+                        const isPdf = isPdfFile(m);
+                        return (
+                          <div
+                            key={m.id}
+                            className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-2.5"
+                          >
+                            <div className="flex items-center gap-2 overflow-hidden pr-1">
+                              <div
+                                className={`h-7 w-7 rounded-lg flex items-center justify-center shrink-0 ${
+                                  isPdf ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'
+                                }`}
+                              >
+                                {isPdf ? <FileText className="h-4 w-4" /> : <FileArchive className="h-4 w-4" />}
+                              </div>
+                              <div className="truncate">
+                                <p className="font-semibold truncate text-[11px]">{m.name}</p>
+                                <p className="text-[9px] text-slate-400">
+                                  {m.size ? `${(m.size / 1024 / 1024).toFixed(1)} MB` : '文档'}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              {isPdf && (
+                                <button
+                                  onClick={() => setPreviewPdfItem(m)}
+                                  className="rounded bg-blue-600 px-2 py-1 text-[10px] text-white hover:bg-blue-700 transition-colors"
+                                >
+                                  预览
+                                </button>
+                              )}
+                              <a
+                                href={m.url}
+                                download={m.name}
+                                className={`rounded px-2 py-1 text-[10px] transition-colors ${
+                                  isPdf
+                                    ? 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                                    : 'bg-blue-600 text-white hover:bg-blue-700'
+                                }`}
+                              >
+                                下载
+                              </a>
                             </div>
                           </div>
-                          <span className="shrink-0 rounded-md bg-blue-600 px-2 py-1 text-[10px] text-white">
-                            下载
-                          </span>
-                        </div>
-                      ))
+                        );
+                      })
                     ) : (
                       <div className="flex h-24 flex-col items-center justify-center rounded-xl bg-slate-50 text-slate-400 border border-dashed border-slate-200">
                         <FileText className="h-6 w-6 mb-1 text-slate-300" />
@@ -258,6 +288,16 @@ export const DualPreview: React.FC<DualPreviewProps> = ({
           </button>
         </div>
       </div>
+
+      {/* PDF Preview Modal in Workspace */}
+      {previewPdfItem && (
+        <PdfViewerModal
+          isOpen={!!previewPdfItem}
+          onClose={() => setPreviewPdfItem(null)}
+          pdfUrl={previewPdfItem.url}
+          title={previewPdfItem.name}
+        />
+      )}
     </div>
   );
 };

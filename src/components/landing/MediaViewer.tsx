@@ -1,7 +1,9 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Download, Film, Maximize2, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Download, Film, Maximize2, X, ChevronLeft, ChevronRight, FileText, Eye, FileArchive } from 'lucide-react';
+import { isPdfFile } from '@/lib/pdf-helpers';
+import { PdfViewerModal } from './PdfViewerModal';
 
 interface MediaItem {
   id: string;
@@ -18,6 +20,7 @@ interface MediaViewerProps {
 
 export const MediaViewer: React.FC<MediaViewerProps> = ({ contentType, mediaList }) => {
   const [activeImageIdx, setActiveImageIdx] = useState<number | null>(null);
+  const [previewPdfItem, setPreviewPdfItem] = useState<MediaItem | null>(null);
 
   // If inside WeChat browser, we can leverage WeChat native Image Preview
   const handleOpenImage = (idx: number) => {
@@ -195,6 +198,89 @@ export const MediaViewer: React.FC<MediaViewerProps> = ({ contentType, mediaList
             </div>
           ))}
         </div>
+      )}
+
+      {/* 3. Document / File Download & PDF Online Preview */}
+      {contentType === 'file' && (
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center justify-between text-xs text-slate-500 font-semibold uppercase tracking-wider">
+            <span>附件资料列表 ({mediaList.length})</span>
+            <span className="text-[10px] text-blue-600 font-normal">支持 PDF 在线免下载阅读</span>
+          </div>
+
+          <div className="flex flex-col gap-2.5">
+            {mediaList.map((item, idx) => {
+              const isPdf = isPdfFile(item);
+
+              return (
+                <div
+                  key={idx}
+                  className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50/70 p-3.5 shadow-sm hover:bg-slate-50 transition-colors"
+                >
+                  <div className="flex items-center gap-3 overflow-hidden pr-2">
+                    <div
+                      className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ${
+                        isPdf ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'
+                      }`}
+                    >
+                      {isPdf ? <FileText className="h-5 w-5" /> : <FileArchive className="h-5 w-5" />}
+                    </div>
+                    <div className="truncate">
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-xs font-semibold text-slate-800 truncate">{item.name}</p>
+                        {isPdf && (
+                          <span className="rounded bg-red-100 px-1 py-0.2 text-[9px] font-bold text-red-600 shrink-0">
+                            PDF
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-slate-400 mt-0.5">
+                        {item.size ? `${(item.size / 1024 / 1024).toFixed(2)} MB` : '文件资源'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {/* PDF Online Preview Button */}
+                    {isPdf && (
+                      <button
+                        onClick={() => setPreviewPdfItem(item)}
+                        className="inline-flex items-center gap-1 rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 active:scale-95 transition-all"
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                        预览
+                      </button>
+                    )}
+
+                    {/* Download Button */}
+                    <a
+                      href={item.url}
+                      download={item.name}
+                      className={`inline-flex items-center gap-1 rounded-xl px-3 py-1.5 text-xs font-semibold transition-all ${
+                        isPdf
+                          ? 'bg-slate-200/80 text-slate-700 hover:bg-slate-300'
+                          : 'bg-blue-600 text-white shadow-sm hover:bg-blue-700 active:scale-95'
+                      }`}
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      下载
+                    </a>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* PDF Viewer Fullscreen Modal */}
+      {previewPdfItem && (
+        <PdfViewerModal
+          isOpen={!!previewPdfItem}
+          onClose={() => setPreviewPdfItem(null)}
+          pdfUrl={previewPdfItem.url}
+          title={previewPdfItem.name}
+        />
       )}
     </div>
   );

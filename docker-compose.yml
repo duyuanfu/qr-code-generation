@@ -1,19 +1,62 @@
-version: '3.8'
-
 services:
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: qr-studio-app
+  mysql:
+    image: mysql:8.0
+    container_name: qr-studio-mysql
     restart: unless-stopped
-    # 宿主机映射端口：可通过 .env 中的 APP_PORT 自定义（默认为 3001，避免与常见 3000/8080 冲突）
-    ports:
-      - '${APP_PORT:-3001}:3001'
     environment:
-      - NODE_ENV=production
-      - PORT=3001
-      - DATABASE_PATH=/app/data/db.json
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-qr_studio}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
     volumes:
-      # 持久化存储数据和上传的多媒体文件（即使容器更新或重建，数据永不丢失）
-      - ./data:/app/data
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ['CMD-SHELL', 'mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  backend:
+    build:
+      context: ./backend
+    container_name: qr-studio-backend
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-qr_studio}?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      # 上传目录与建表：schema.sql 在每次启动时幂等执行
+      APP_UPLOAD_DIR: /app/data/uploads
+      JWT_SECRET: ${JWT_SECRET:-qr-studio-change-me-in-production-32bytes-minimum}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-duyuanfu@yeah.net}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-dyf5970@}
+      # 生产环境务必保持 false，否则任何登录用户都能自助免单
+      MOCK_PAY_ENABLED: ${MOCK_PAY_ENABLED:-false}
+      TZ: Asia/Shanghai
+    volumes:
+      # 与本地开发保持一致：后端把上传文件写在自身目录下的 data/uploads
+      - ./backend/data/uploads:/app/data/uploads
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        BACKEND_URL: http://backend:8080
+    container_name: qr-studio-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      BACKEND_URL: http://backend:8080
+    ports:
+      # 宿主机映射端口：可通过 .env 中的 APP_PORT 自定义（默认 3001，避免与 3000/8080 冲突）
+      - '${APP_PORT:-3001}:3001'
+
+volumes:
+  mysql-data:

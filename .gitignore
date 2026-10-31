@@ -1,17 +1,23 @@
 # Dependencies
-/node_modules
-/.pnp
+node_modules/
+.pnp
 .pnp.js
 
 # Testing
-/coverage
+coverage
 
 # Next.js build output
-/.next/
-/out/
+.next/
+out/
+*.tsbuildinfo
+
+# Java / Maven build output
+backend/target/
+*.class
 
 # Production data & uploads
-/data/
+data/
+backend/data/
 /public/uploads/
 
 # Environment variables
@@ -28,3 +34,16 @@ yarn-error.log*
 .DS_Store
 *.pem
 Thumbs.db
+
+# IDE
+.idea/
+*.iml
+
+# AI 编码助手技能包（由 `uipro init` 生成，约 4.5MB，每人本地生成即可，不入库）
+.codebuddy/
+.agents/
+.claude/skills/
+.cursor/
+
+# AI 编码助手工作记忆（按人/按会话产生，不入库；长期结论请写进 AGENT.md）
+.workbuddy/

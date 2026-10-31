@@ -84,6 +84,8 @@ jobs:
       SPRING_DATASOURCE_URL: jdbc:mysql://127.0.0.1:3306/qr_studio?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
       SPRING_DATASOURCE_USERNAME: root
       SPRING_DATASOURCE_PASSWORD: ci_root_pw
+      # application.yml 只认 DB_PASSWORD，不再有回退值；本地/容器/CI 都必须显式给
+      DB_PASSWORD: ci_root_pw
       # 以下三项只在 CI 里生效，与生产无关
       ADMIN_EMAIL: ci-admin@example.com
       ADMIN_PASSWORD: CiTestPassw0rd

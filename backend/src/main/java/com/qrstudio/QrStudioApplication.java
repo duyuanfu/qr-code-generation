@@ -26,8 +26,10 @@ public class QrStudioApplication {
     public CommandLineRunner initDatabaseAndAdmin(
             UserMapper userMapper,
             PasswordEncoder passwordEncoder,
-            @Value("${app.admin.email:duyuanfu@yeah.net}") String adminEmail,
-            @Value("${app.admin.password:dyf5970@}") String adminPassword,
+            @Value("${app.admin.email}") String adminEmail,
+            // 不给默认值：这里以前直接写死了开发口令，等于给线上留了个后门。
+            // 缺失时由 Spring 启动期报错，口令只可能来自环境变量或 application-dev.yml。
+            @Value("${app.admin.password}") String adminPassword,
             @Value("${app.upload.dir:data/uploads}") String uploadDir) {
         return args -> {
             // 上传目录必须和 WebConfig / UploadController 读同一个配置项。

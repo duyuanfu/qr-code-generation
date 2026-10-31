@@ -1,0 +1,26 @@
+# ============================================================
+# 仅本地开发使用：mvn spring-boot:run -Dspring-boot.run.profiles=dev
+#
+# 这里放的是 application.yml 里被刻意去掉的回退值（明文口令、宽松开关）。
+# 生产环境不要启用本 profile —— 一旦启用，JWT 密钥和数据库口令就是公开的。
+# ============================================================
+
+spring:
+  datasource:
+    username: root
+    password: root
+
+mybatis-plus:
+  configuration:
+    # SQL 打到控制台，只在本地开发需要
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+
+app:
+  jwt:
+    secret: qr-studio-local-dev-only-jwt-secret-not-for-production-32bytes
+  admin:
+    email: duyuanfu@yeah.net
+    password: dyf5970@
+  paywall:
+    # 本地没有真实支付通道，开启模拟支付才能走通下单
+    mock-pay-enabled: true

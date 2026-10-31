@@ -8,7 +8,7 @@
 
 - [x] 2.1 Initialize Maven Spring Boot 3.x project in `backend/` with Java 17, Spring Web, MyBatis-Plus, MySQL Connector, and JJWT dependencies
 - [x] 2.2 Configure `backend/src/main/resources/application.yml` for MySQL (`localhost:3306`, root/root, db `qr_studio`) and file storage path
-- [x] 2.3 Create `schema.sql` initializing tables (`users`, `dynamic_qrs`, `scan_logs`, `orders`, `pricing_configs`, `payment_configs`) with default admin (`duyuanfu@yeah.net` / `dyf5970@`) and pricing data
+- [x] 2.3 Create `schema.sql` initializing tables (`users`, `dynamic_qrs`, `scan_logs`, `orders`, `pricing_configs`, `payment_configs`) with default admin (`ADMIN_EMAIL` / `ADMIN_PASSWORD`，口令不再写死) and pricing data
 
 ## 3. Java Backend Core Domain & Security Compliance
 

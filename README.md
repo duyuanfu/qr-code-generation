@@ -80,10 +80,10 @@
 
 ```bash
 # 1. 数据库：准备一个 MySQL 8，库名 qr_studio（JDBC 串已带 createDatabaseIfNotExist）
-#    默认连接 root/root，可用环境变量覆盖
 
 # 2. 启动后端（:8080，启动时自动建表并种入默认管理员）
-cd backend && mvn spring-boot:run
+#    dev profile 提供本地口令与模拟支付开关，生产环境不要启用
+cd backend && mvn spring-boot:run -Dspring-boot.run.profiles=dev
 
 # 3. 启动前端（:3001）
 cd frontend && npm install && npm run dev
@@ -111,18 +111,24 @@ cd qr-code-generation
 ```bash
 cp .env.example .env
 ```
-按需修改 `.env`（**上线前务必替换密钥与初始口令**）：
+按需修改 `.env`（**以下三项必填，留空则容器无法启动**）：
 ```ini
 APP_PORT=3001                 # 前端对外端口
-MYSQL_ROOT_PASSWORD=change-me
+MYSQL_ROOT_PASSWORD=change-me # 数据库口令，建议随机生成
 MYSQL_DATABASE=qr_studio
-JWT_SECRET=change-me-to-a-long-random-string
+JWT_SECRET=                   # 至少 32 字节，生成：openssl rand -base64 48
 ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD=change-me
+ADMIN_PASSWORD=               # 首次启动种子化的管理员口令
 MOCK_PAY_ENABLED=false        # 生产环境必须 false
 UPLOAD_MAX_FILE_SIZE_MB=500   # 单文件上限，需与 Nginx client_max_body_size 一起放大
 NEXT_PUBLIC_BRAND_URL=http://qr.trythis.pw/   # 扫码落地页品牌链接
 ```
+
+> 后端不再内置任何密钥回退值：数据库口令、JWT 密钥、管理员口令只从环境变量读取，
+> 缺失时进程直接启动失败。本地开发不用 Docker 时，改用 dev profile 即可获得本地默认值：
+> ```bash
+> cd backend && mvn spring-boot:run -Dspring-boot.run.profiles=dev
+> ```
 
 ### 3. 一键启动 Docker 容器
 

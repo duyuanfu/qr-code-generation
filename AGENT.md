@@ -450,7 +450,8 @@ python .codebuddy/skills/ui-ux-pro-max/scripts/search.py "mobile viewport fixed 
 > 新增列/新表不再靠"改 schema.sql 后祈祷老库也生效"——`config/SchemaMigrator`（`@Order(1)` ApplicationRunner）会在启动时用 `information_schema` 查列再 `ALTER`，并用 `app_migrations` 表 + `INSERT IGNORE` 抢占来保证一次性数据迁移只跑一次。MySQL 8 没有 `ADD COLUMN IF NOT EXISTS`，别写成 PG 语法。
 
 > 初始管理员账号由 `QrStudioApplication` 的 `CommandLineRunner` 在**库里没有该邮箱时**种入，`schema.sql` 里没有 users 的种子语句 —— 别去 SQL 里找。
-> 账号、口令、JWT 密钥均通过 `ADMIN_EMAIL` / `ADMIN_PASSWORD` / `JWT_SECRET` 环境变量注入，`application.yml` 里的值是**仅限本地开发**的回退值。
+> 账号、口令、JWT 密钥均通过 `ADMIN_EMAIL` / `ADMIN_PASSWORD` / `JWT_SECRET` 环境变量注入。
+> `application.yml` 里这三项**没有回退值**，本地默认值单独放在 `application-dev.yml`（dev profile）。
 
 ---
 
@@ -527,21 +528,40 @@ spring:
 
 ```bash
 # 1) 数据库：需要一个 MySQL 8，库名 qr_studio（JDBC 串带 createDatabaseIfNotExist=true）
-#    账号密码默认 root/root，可用环境变量覆盖
 
 # 2) 后端（:8080，启动即建表 + 种子管理员）
-cd backend && mvn spring-boot:run
+#    dev profile 提供本地口令与模拟支付开关；不带 profile 时必须显式给环境变量
+cd backend && mvn spring-boot:run -Dspring-boot.run.profiles=dev
 
 # 3) 前端（:3001）
 cd frontend && npm install && npm run dev
 ```
 
+### 配置分层（敏感值只在环境变量里）
+
+`application.yml` 里 **DB 口令、JWT 密钥、管理员口令三项都写成 `${VAR}` 且没有回退值**，
+缺失时 Spring 启动直接报错 —— 这是刻意的，为了让「忘配密钥」在启动期暴露，而不是带着
+开发口令悄悄上线。`QrStudioApplication` 的 `@Value("${app.admin.password}")` 同理，不再有硬编码默认值。
+
+| 变量 | 用途 | 本地开发 |
+|---|---|---|
+| `DB_PASSWORD` | MySQL 口令（用户名 `DB_USERNAME`，默认 root） | `application-dev.yml` 里 `root` |
+| `JWT_SECRET` | 签名密钥，≥32 字节 | `application-dev.yml` 里的固定 dev 串 |
+| `ADMIN_PASSWORD` | 首次启动种子化管理员的口令 | `application-dev.yml` 里 |
+| `MOCK_PAY_ENABLED` | 模拟支付，**默认 false** | dev profile 里 `true` |
+
+> 只有 `ADMIN_EMAIL` 保留默认值（非敏感）。`MOCK_PAY_ENABLED` 从「默认 true」改成
+> 「默认 false」：漏配的后果从「任何人可免单」变成「收款需人工退款」，方向选错得更安全。
+
 一键编排（需要 Docker）：
 
 ```bash
-cp .env.example .env   # 改 JWT_SECRET / ADMIN_* / MYSQL_ROOT_PASSWORD
+cp .env.example .env   # 必须填 MYSQL_ROOT_PASSWORD / JWT_SECRET / ADMIN_PASSWORD
 docker compose up -d --build
 ```
+
+`docker-compose.yml` 里这三项用 `${VAR:?提示}` 写法，缺变量时 compose 直接报错退出，
+容器根本不会起来。
 
 - 服务：`mysql:3306`（healthcheck）+ `backend:8080` + `frontend:3001`
 - 上传卷统一挂到 `./backend/data/uploads`，与本地开发路径一致（两套路径会丢文件）

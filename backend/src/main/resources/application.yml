@@ -17,8 +17,10 @@ spring:
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: jdbc:mysql://localhost:3306/qr_studio?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true&allowPublicKeyRetrieval=true&useSSL=false
-    username: root
-    password: root
+    # 口令只从环境变量读取，不设回退值：缺失时启动直接失败，避免带着默认口令上线。
+    # 本地开发的默认值在 application-dev.yml（用 --spring.profiles.active=dev 启用）。
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD}
     hikari:
       maximum-pool-size: 15
       minimum-idle: 5
@@ -38,23 +40,23 @@ spring:
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
   global-config:
     db-config:
       id-type: assign_id
 
 app:
   jwt:
-    # 生产环境务必通过环境变量 JWT_SECRET 覆盖，长度至少 32 字节
-    secret: ${JWT_SECRET:qr-studio-super-secure-jwt-secret-key-2026-very-long-and-safe-32bytes!}
+    # 只从环境变量读取（>=32 字节），无回退值；本地默认值见 application-dev.yml
+    secret: ${JWT_SECRET}
     expiration: 604800000 # 7 days
   admin:
-    # 首次启动时用于种子化超级管理员，账号已存在则不会覆盖
+    # 首次启动时用于种子化超级管理员，账号已存在则不会覆盖；口令同样只从环境变量读取
     email: ${ADMIN_EMAIL:duyuanfu@yeah.net}
-    password: ${ADMIN_PASSWORD:dyf5970@}
+    password: ${ADMIN_PASSWORD}
   paywall:
-    # 一键模拟支付通道。生产环境必须设为 false，否则任何登录用户都能自助免单
-    mock-pay-enabled: ${MOCK_PAY_ENABLED:true}
+    # 一键模拟支付通道。只能靠环境变量开启，默认 false —— 漏配的后果是多收款需人工退款，
+    # 而不是任何登录用户都能自助免单。
+    mock-pay-enabled: ${MOCK_PAY_ENABLED:false}
   upload:
     dir: "data/uploads"
     max-file-size-mb: ${UPLOAD_MAX_FILE_SIZE_MB:500}

@@ -136,6 +136,17 @@ Server Component 里不能 fetch 相对路径，因此用 `lib/backend-api.ts` *
 - 顶部 `LandingHeader`（`fixed inset-x-0 top-0 z-40 h-12`）承载 logo + 站名（点回首页）和「进入首页」按钮，`variant='dark'` 供视频黑底页使用；**调用方必须给内容加 `pt-12`**，否则首屏会被盖住。
 - 图片查看器的全屏预览在微信里走 `WeixinJSBridge.invoke('imagePreview')`，让用户能用系统相册的保存/转发；浏览器里走自建 lightbox。
 
+**PDF 阅读器（`MobilePdfCanvasViewer`）的三条硬约束** —— 2026-11-04 实测后定下，别改回去：
+
+1. **pdf.js 必须自托管**（`frontend/public/vendor/pdfjs/`，含 320 KB 主包、1.06 MB worker、1.1 MB cmaps，`next.config.mjs` 给它打了 `immutable`）。
+   原来指向 `cdn.bootcdn.net`，那家返回 `Cache-Control: no-cache, no-store, must-revalidate` + `X-CCDN-CacheTTL: 0`：
+   **每次扫码都重下 1.4 MB，且第二次打开一分不省**。实测 124 KB/s 下 worker 单文件 8.5 s，49 页文档首屏 12.8 s。
+   自托管后首屏 0.6 s（同机同视口）。
+2. **逐页懒渲染 + DPR 封顶 2**。一次画完 49 页时 DPR 3 产生 362 MB canvas 位图（4x 屏 640 MB），iOS 会白页/整页重载。
+   现在用 `IntersectionObserver`（`rootMargin: 800px`）滚到再画，首屏只占 3 页 ≈ 10 MB；占位 div 用首页宽高比撑起滚动条，避免跳变。
+3. **加载遮罩等第 1 页画完再撤**。以前 `getDocument` 一 resolve 就撤，用户看到的是纯白屏，体感上「慢」有一半来自这里。
+   另外横竖屏切换会按新宽度重画（只监听宽度变化，地址栏收起的高度变化不触发）。
+
 ### 5.3 收费墙状态机
 
 ```

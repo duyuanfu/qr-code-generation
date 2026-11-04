@@ -6,118 +6,222 @@ interface MobilePdfCanvasViewerProps {
   pdfUrl: string;
 }
 
+/**
+ * pdf.js 走同源静态资源（`public/vendor/pdfjs/`，由 next.config 打上 immutable 缓存）。
+ *
+ * 之前用的是 cdn.bootcdn.net，但那家返回
+ * `Cache-Control: no-cache, no-store, must-revalidate`，等于每次扫码都要
+ * 重下 1.4 MB（主包 320 KB + worker 1.06 MB）。实测本地到 CDN 只有 124 KB/s，
+ * 光 worker 就 8.5 秒，整个首屏 12.8 秒 —— 而且第二次打开一分不省。
+ * 自托管后这块归零，只剩本地静态文件的 304/内存命中。
+ */
+const PDFJS_BASE = '/vendor/pdfjs';
+const PDFJS_SRC = `${PDFJS_BASE}/pdf.min.js`;
+const WORKER_SRC = `${PDFJS_BASE}/pdf.worker.min.js`;
+const CMAP_URL = `${PDFJS_BASE}/cmaps/`;
+
+/**
+ * Retina 屏上 2 倍已经看不出锯齿，再往上只是把位图翻倍。
+ * 之前不封顶：DPR 3 时 49 页 × 1170×1654 ≈ 362 MB canvas 位图，
+ * iOS 会白页甚至整页重载；DPR 4 的机器直接到 640 MB。
+ */
+const MAX_DPR = 2;
+
+/** 视口外提前 800px 开始画，快速下滑时不会看到大片留白 */
+const PRELOAD_MARGIN = '800px 0px';
+
+declare global {
+  interface Window {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    pdfjsLib?: any;
+  }
+}
+
+/** 只插一次 script，并发调用共用同一个 promise */
+function loadPdfJs(): Promise<unknown> {
+  if (typeof window === 'undefined') return Promise.reject(new Error('no window'));
+  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+
+  const existing = document.querySelector<HTMLScriptElement>('script[data-pdfjs-loader]');
+  if (existing) {
+    return new Promise((resolve, reject) => {
+      existing.addEventListener('load', () => resolve(window.pdfjsLib));
+      existing.addEventListener('error', () => reject(new Error('pdf.js 加载失败')));
+    });
+  }
+
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = PDFJS_SRC;
+    script.async = true;
+    script.dataset.pdfjsLoader = '1';
+    script.onload = () => resolve(window.pdfjsLib);
+    script.onerror = () => reject(new Error('pdf.js 加载失败'));
+    document.head.appendChild(script);
+  });
+}
+
+/** pdf.js 没有随工程引入类型（走的是同源 UMD 包），这里只声明用到的那一小部分 */
+interface PdfPageLike {
+  getViewport: (opts: { scale: number }) => { width: number; height: number };
+  render: (opts: {
+    canvasContext: CanvasRenderingContext2D;
+    viewport: unknown;
+  }) => { promise: Promise<void> };
+}
+
+interface PdfDocLike {
+  numPages: number;
+  getPage: (pageNumber: number) => Promise<PdfPageLike>;
+}
+
+interface PdfJsLike {
+  GlobalWorkerOptions: { workerSrc: string };
+  getDocument: (opts: Record<string, unknown>) => { promise: Promise<PdfDocLike> };
+}
+
 export const MobilePdfCanvasViewer: React.FC<MobilePdfCanvasViewerProps> = ({ pdfUrl }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * 仅在「宽度真的变了」时更新（横竖屏切换）。
+   * 移动端地址栏收起也会触发 resize，但那只改高度，跟着重画等于白烧一遍 CPU。
+   */
+  const [layoutWidth, setLayoutWidth] = useState(0);
 
   useEffect(() => {
-    let isCancelled = false;
+    const onResize = () => {
+      const w = document.documentElement.clientWidth;
+      setLayoutWidth((prev) => (Math.abs(prev - w) > 4 ? w : prev));
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
-    const loadScript = (src: string) =>
-      new Promise((resolve, reject) => {
-        const script = document.createElement('script');
-        script.src = src;
-        script.onload = resolve;
-        script.onerror = reject;
-        document.head.appendChild(script);
-      });
+  useEffect(() => {
+    let cancelled = false;
+    let observer: IntersectionObserver | null = null;
+    const container = containerRef.current;
 
-    const loadAndRenderPdf = async () => {
+    const run = async () => {
       setLoading(true);
       setError(null);
+      if (!container) return;
+      container.replaceChildren();
 
       try {
-        // Load pdfjs from high-speed domestic mirror first, fallback to cloudflare
-        if (!(window as any).pdfjsLib) {
-          try {
-            await loadScript('https://cdn.bootcdn.net/ajax/libs/pdf.js/3.11.174/pdf.min.js');
-          } catch (e) {
-            await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
-          }
-        }
+        const lib = (await loadPdfJs()) as PdfJsLike;
+        if (cancelled) return;
 
-        const pdfjsLib = (window as any).pdfjsLib;
-        // Bootcdn worker fallback
-        pdfjsLib.GlobalWorkerOptions.workerSrc =
-          'https://cdn.bootcdn.net/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        lib.GlobalWorkerOptions.workerSrc = WORKER_SRC;
 
-        // Fetch and load PDF with Chinese character cmap support
-        const loadingTask = pdfjsLib.getDocument({
+        const pdf = await lib.getDocument({
           url: pdfUrl,
-          cMapUrl: 'https://cdn.bootcdn.net/ajax/libs/pdf.js/3.11.174/cmaps/',
+          cMapUrl: CMAP_URL,
           cMapPacked: true,
-        });
+        }).promise;
+        if (cancelled || !container) return;
 
-        const pdf = await loadingTask.promise;
-        if (isCancelled) return;
+        // 所有页面统一按第一页的宽高比先占位，保证滚动条长度一开始就是对的
+        const firstPage = await pdf.getPage(1);
+        if (cancelled) return;
+        const baseViewport = firstPage.getViewport({ scale: 1 });
+        const cssWidth = container.clientWidth || window.innerWidth;
+        const scale = cssWidth / baseViewport.width;
+        const placeholderHeight = baseViewport.height * scale;
+        const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
 
+        const holders: HTMLDivElement[] = [];
+        /** 已画过的页不再重复排队；渲染失败时从集合里删掉，滚回来还能重试 */
+        const painted = new Set<number>();
+
+        const renderPage = async (index: number) => {
+          if (cancelled || painted.has(index)) return;
+          const holder = holders[index];
+          if (!holder) return;
+          painted.add(index);
+
+          try {
+            const page = index === 0 ? firstPage : await pdf.getPage(index + 1);
+            if (cancelled) return;
+
+            const viewport = page.getViewport({ scale });
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.floor(viewport.width * dpr);
+            canvas.height = Math.floor(viewport.height * dpr);
+            canvas.style.width = `${viewport.width}px`;
+            canvas.style.height = `${viewport.height}px`;
+            canvas.style.display = 'block';
+            canvas.style.margin = '0 auto';
+
+            const context = canvas.getContext('2d');
+            if (!context) return;
+            context.scale(dpr, dpr);
+
+            // 页面尺寸和首页不同时（横竖混排）在这里纠正占位高度
+            holder.style.height = `${viewport.height}px`;
+            holder.replaceChildren(canvas);
+
+            await page.render({ canvasContext: context, viewport }).promise;
+            if (cancelled) return;
+
+            // 首屏画完才撤加载遮罩：之前是 getDocument 一 resolve 就撤，
+            // 用户看到的是纯白页，体感上「解析慢」有一半来自这里
+            if (index === 0) setLoading(false);
+          } catch (err) {
+            painted.delete(index);
+            if (index === 0 && !cancelled) {
+              console.error('PDF first page render failed:', err);
+              setError('文档解析中，请点击下方直接全屏打开');
+              setLoading(false);
+            }
+          }
+        };
+
+        observer = new IntersectionObserver(
+          (entries) => {
+            for (const entry of entries) {
+              if (!entry.isIntersecting) continue;
+              const index = Number((entry.target as HTMLElement).dataset.pageIndex);
+              if (Number.isFinite(index)) void renderPage(index);
+            }
+          },
+          { rootMargin: PRELOAD_MARGIN, threshold: 0 },
+        );
+
+        for (let i = 0; i < pdf.numPages; i++) {
+          const holder = document.createElement('div');
+          holder.dataset.pageIndex = String(i);
+          holder.style.height = `${placeholderHeight}px`;
+          holder.className = 'w-full bg-white';
+          container.appendChild(holder);
+          holders.push(holder);
+          observer.observe(holder);
+        }
+      } catch (err) {
+        if (cancelled) return;
+        console.error('PDF rendering failed:', err);
+        setError('文档解析中，请点击下方直接全屏打开');
         setLoading(false);
-
-        const container = containerRef.current;
-        if (!container) return;
-        container.innerHTML = '';
-
-        // Device pixel ratio for crisp high-DPI text rendering on mobile Retina/OLED
-        const dpr = window.devicePixelRatio || 1;
-        const screenWidth = window.innerWidth;
-
-        // Render every page directly into high-res Canvas, full-width with zero margins
-        for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-          if (isCancelled) return;
-          const page = await pdf.getPage(pageNum);
-
-          const unscaledViewport = page.getViewport({ scale: 1 });
-          // Scale so page width equals 100% of phone screen width
-          const scale = screenWidth / unscaledViewport.width;
-          const viewport = page.getViewport({ scale });
-
-          const canvas = document.createElement('canvas');
-          const context = canvas.getContext('2d');
-          if (!context) continue;
-
-          // Set CSS display width to exact screen width
-          canvas.style.width = `${viewport.width}px`;
-          canvas.style.height = `${viewport.height}px`;
-          canvas.style.display = 'block';
-          canvas.style.margin = '0 auto';
-
-          // Set buffer pixel dimensions scaled by DPR
-          canvas.width = Math.floor(viewport.width * dpr);
-          canvas.height = Math.floor(viewport.height * dpr);
-
-          context.scale(dpr, dpr);
-
-          const renderContext = {
-            canvasContext: context,
-            viewport: viewport,
-          };
-
-          container.appendChild(canvas);
-          await page.render(renderContext).promise;
-        }
-      } catch (err: any) {
-        if (!isCancelled) {
-          console.error('PDF rendering failed:', err);
-          setError('文档解析中，请点击下方直接全屏打开');
-          setLoading(false);
-        }
       }
     };
 
-    loadAndRenderPdf();
+    void run();
 
     return () => {
-      isCancelled = true;
+      cancelled = true;
+      observer?.disconnect();
+      container?.replaceChildren();
     };
-  }, [pdfUrl]);
+  }, [pdfUrl, layoutWidth]);
 
   return (
     <div className="w-full min-h-screen bg-white flex flex-col items-center m-0 p-0 overflow-x-hidden">
       {/* Loading state */}
       {loading && (
         <div className="fixed inset-0 flex flex-col items-center justify-center bg-white z-50">
-          <div className="h-9 w-9 rounded-full border-3 border-blue-600 border-t-transparent animate-spin mb-3" />
+          <div className="h-9 w-9 rounded-full border-[3px] border-blue-600 border-t-transparent animate-spin mb-3" />
           <span className="text-xs text-slate-500 font-medium">正在加载高清文档...</span>
         </div>
       )}

@@ -60,6 +60,23 @@ export const CONTENT_TYPE_LABEL: Record<string, string> = {
   file: '文件下载（常用格式）',
 };
 
+/**
+ * 筛选项用的短标签。上面的长名是给人读的完整描述，
+ * 塞进下拉框或 chips 会把整行撑开，这里单独给一份 2 字版本。
+ */
+export const CONTENT_TYPE_SHORT: Record<string, string> = {
+  url: '链接',
+  text: '文本',
+  vcard: '名片',
+  image: '图片',
+  video: '视频',
+  pdf: 'PDF',
+  file: '文件',
+};
+
+/** 类型筛选的固定展示顺序，跟着产品主次走，不跟数据顺序走 */
+export const CONTENT_TYPE_ORDER = ['url', 'image', 'video', 'pdf', 'file', 'text', 'vcard'] as const;
+
 export type OrderStatus = 'pending' | 'pending_review' | 'paid' | 'used' | 'expired';
 
 export interface AdminOrder {

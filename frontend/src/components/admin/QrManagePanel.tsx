@@ -25,6 +25,8 @@ import { Badge } from '@/components/ui/badge';
 import { apiFetch, ApiError } from '@/lib/api-client';
 import {
   CONTENT_TYPE_LABEL,
+  CONTENT_TYPE_ORDER,
+  CONTENT_TYPE_SHORT,
   QR_LIFECYCLE_LABEL,
   daysLeftText,
   type AdminDynamicQr,
@@ -82,6 +84,8 @@ export function QrManagePanel() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterKey>('all');
+  /** 内容类型筛选，和生命周期筛选是正交的两个维度 */
+  const [typeFilter, setTypeFilter] = useState<string>('all');
   const [keyword, setKeyword] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
   /** 正在请求中的行 id（或 'batch'），用来置灰单个按钮而不是整页转圈 */
@@ -106,7 +110,8 @@ export function QrManagePanel() {
   const items = data?.items ?? [];
   const stats = data?.stats;
 
-  const visible = useMemo(() => {
+  /** 生命周期 + 关键词过滤后的结果，类型筛选取自它 */
+  const scoped = useMemo(() => {
     const alive = items.filter((i) => !i.deleted);
     let list: AdminDynamicQr[];
     switch (filter) {
@@ -131,6 +136,40 @@ export function QrManagePanel() {
     }
     return list.filter((i) => matches(i, keyword));
   }, [items, filter, keyword]);
+
+  /**
+   * 类型选项只列当前结果里真实出现过的类型，并带数量 ——
+   * 固定渲染 7 个的话，库里没有名片码时点进去永远是空的。
+   */
+  const typeOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const i of scoped) {
+      const t = i.contentType || 'unknown';
+      counts.set(t, (counts.get(t) ?? 0) + 1);
+    }
+    const order = CONTENT_TYPE_ORDER as readonly string[];
+    const known = order
+      .filter((t) => counts.has(t))
+      .map((t) => ({ value: t, label: CONTENT_TYPE_SHORT[t] || t, count: counts.get(t) as number }));
+    // 兜底：库里出现未登记的新类型时也要能筛，不能因为没写进常量就消失
+    const extra = Array.from(counts.keys())
+      .filter((t) => !order.includes(t))
+      .map((t) => ({ value: t, label: CONTENT_TYPE_SHORT[t] || t, count: counts.get(t) as number }));
+    return [...known, ...extra];
+  }, [scoped]);
+
+  // 切换生命周期后，原先选中的类型可能整体消失（下拉里没有这个选项了），
+  // 此时自动回到「全部类型」，否则列表永远为空且无法手动取消
+  useEffect(() => {
+    if (typeFilter !== 'all' && !typeOptions.some((t) => t.value === typeFilter)) {
+      setTypeFilter('all');
+    }
+  }, [typeOptions, typeFilter]);
+
+  const visible = useMemo(
+    () => (typeFilter === 'all' ? scoped : scoped.filter((i) => i.contentType === typeFilter)),
+    [scoped, typeFilter],
+  );
 
   // 筛选变化后，已选中但已不可见的行要从选区里剔除，
   // 否则「批量删除 3 条」实际可能删到一条你看不见的活码
@@ -292,8 +331,22 @@ export function QrManagePanel() {
             ))}
           </div>
 
-          <div className="flex items-center gap-2">
-            <div className="relative">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap">
+            <select
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value)}
+              aria-label="按内容类型筛选"
+              className="h-9 shrink-0 rounded-lg border border-slate-200 bg-white px-2 text-xs font-medium text-slate-700 outline-none focus:border-blue-400"
+            >
+              <option value="all">全部类型{scoped.length ? ` (${scoped.length})` : ''}</option>
+              {typeOptions.map((t) => (
+                <option key={t.value} value={t.value}>
+                  {t.label} ({t.count})
+                </option>
+              ))}
+            </select>
+
+            <div className="relative min-w-0 flex-1 sm:flex-none">
               <Search
                 className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400"
                 aria-hidden="true"
@@ -303,10 +356,10 @@ export function QrManagePanel() {
                 onChange={(e) => setKeyword(e.target.value)}
                 placeholder="搜标题 / 短码 / 邮箱"
                 aria-label="搜索活码"
-                className="h-9 w-48 rounded-lg border border-slate-200 pl-8 pr-2 text-xs text-slate-700 outline-none focus:border-blue-400"
+                className="h-9 w-full rounded-lg border border-slate-200 pl-8 pr-2 text-xs text-slate-700 outline-none focus:border-blue-400 sm:w-48"
               />
             </div>
-            <Button variant="outline" size="sm" onClick={load} disabled={loading} className="h-9 gap-1.5">
+            <Button variant="outline" size="sm" onClick={load} disabled={loading} className="h-9 shrink-0 gap-1.5">
               {loading ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
               ) : (
@@ -384,7 +437,11 @@ export function QrManagePanel() {
           <div className="flex flex-col items-center gap-2 py-16 text-center">
             <CheckCircle2 className="h-8 w-8 text-emerald-500" aria-hidden="true" />
             <p className="text-sm font-medium text-slate-700">
-              {filter === 'todo' ? '没有需要跟进的活码' : keyword ? '没有匹配的活码' : '该分类下没有活码'}
+              {filter === 'todo' && typeFilter === 'all' && !keyword
+                ? '没有需要跟进的活码'
+                : keyword || typeFilter !== 'all'
+                  ? '没有匹配的活码'
+                  : '该分类下没有活码'}
             </p>
             <p className="text-xs text-slate-400">动态活码默认 3 个月服务期，到期前 7 天会进入「需跟进」</p>
           </div>

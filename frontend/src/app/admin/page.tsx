@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   ArrowLeft,
-  CalendarClock,
   Loader2,
   LogOut,
   QrCode,
@@ -24,14 +23,19 @@ import { UsersPanel } from '@/components/admin/UsersPanel';
 import { PricingPanel } from '@/components/admin/PricingPanel';
 import { PaymentConfigPanel } from '@/components/admin/PaymentConfigPanel';
 import { OrdersPanel } from '@/components/admin/OrdersPanel';
-import { ExpiryPanel } from '@/components/admin/ExpiryPanel';
+import { QrManagePanel } from '@/components/admin/QrManagePanel';
 
+/**
+ * 5 个 tab 在 375px 下排不成一行（每个约 110px），flex-wrap 会挤成 3+2、
+ * 第二行只占 2/3 宽，视觉重心偏左且多占一整行高度。
+ * 移动端改用等宽 5 列 + 两字简称，桌面端（sm 起）恢复图标 + 全称。
+ */
 const TAB_ITEMS = [
-  { value: 'users', label: '用户管理', icon: Users },
-  { value: 'pricing', label: '价格配置', icon: Tags },
-  { value: 'payment', label: '收款码', icon: Wallet },
-  { value: 'orders', label: '订单审核', icon: ReceiptText },
-  { value: 'expiry', label: '过期提醒', icon: CalendarClock },
+  { value: 'users', label: '用户管理', short: '用户', icon: Users },
+  { value: 'qrs', label: '活码管理', short: '活码', icon: QrCode },
+  { value: 'pricing', label: '价格配置', short: '价格', icon: Tags },
+  { value: 'payment', label: '收款码', short: '收款', icon: Wallet },
+  { value: 'orders', label: '订单审核', short: '订单', icon: ReceiptText },
 ];
 
 export default function AdminConsolePage() {
@@ -105,7 +109,7 @@ export default function AdminConsolePage() {
                   管理后台
                 </Badge>
               </div>
-              <p className="hidden text-[11px] font-medium text-slate-500 sm:block">用户 · 计费 · 收款 · 订单审核 · 服务期提醒</p>
+              <p className="hidden text-[11px] font-medium text-slate-500 sm:block">用户 · 活码 · 计费 · 收款 · 订单审核</p>
             </div>
           </Link>
         </div>
@@ -142,13 +146,18 @@ export default function AdminConsolePage() {
 
       <main className="mx-auto w-full max-w-6xl px-3 py-4 sm:px-4 md:px-6 md:py-6">
         <Tabs value={tab} onValueChange={setTab}>
-          <TabsList className="h-auto flex-wrap gap-1 p-1">
+          <TabsList className="grid h-auto grid-cols-5 gap-1 p-1 sm:flex sm:flex-wrap">
             {TAB_ITEMS.map((item) => {
               const Icon = item.icon;
               return (
-                <TabsTrigger key={item.value} value={item.value} className="gap-1.5 px-2.5 py-2 text-[13px] sm:px-4 sm:text-sm">
-                  <Icon className="h-4 w-4" aria-hidden="true" />
-                  {item.label}
+                <TabsTrigger
+                  key={item.value}
+                  value={item.value}
+                  className="gap-1 whitespace-nowrap px-1 py-2 text-xs sm:gap-1.5 sm:px-4 sm:text-sm"
+                >
+                  <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                  <span className="sm:hidden">{item.short}</span>
+                  <span className="hidden sm:inline">{item.label}</span>
                 </TabsTrigger>
               );
             })}
@@ -156,6 +165,9 @@ export default function AdminConsolePage() {
 
           <TabsContent value="users">
             <UsersPanel />
+          </TabsContent>
+          <TabsContent value="qrs">
+            <QrManagePanel />
           </TabsContent>
           <TabsContent value="pricing">
             <PricingPanel />
@@ -165,9 +177,6 @@ export default function AdminConsolePage() {
           </TabsContent>
           <TabsContent value="orders">
             <OrdersPanel />
-          </TabsContent>
-          <TabsContent value="expiry">
-            <ExpiryPanel />
           </TabsContent>
         </Tabs>
       </main>

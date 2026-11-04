@@ -45,6 +45,10 @@ public class SchemaMigrator implements ApplicationRunner {
             ensureColumn("pricing_configs", "sort_order", "INT NOT NULL DEFAULT 0");
             ensureColumn("dynamic_qrs", "expires_at", "DATETIME NULL");
             ensureColumn("pricing_configs", "per_item", "TINYINT NOT NULL DEFAULT 0");
+            // 落地页品牌栏开关（后台逐条控制）与软删除标记（回收站）。
+            // 默认值 1 / NULL 正好对应「存量活码继续展示品牌栏、且都还在正常列表里」。
+            ensureColumn("dynamic_qrs", "show_brand_header", "TINYINT NOT NULL DEFAULT 1");
+            ensureColumn("dynamic_qrs", "deleted_at", "DATETIME NULL");
 
             // 2. 业务数据：按体积阶梯的价目表与 3 个月有效期（只执行一次）
             if (markApplied(PRICING_V1)) {

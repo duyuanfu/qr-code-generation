@@ -221,6 +221,78 @@ async function main() {
         Array.isArray(ips) ? ips.join(', ') : '空'
       );
     }
+    console.log('\n[6] 活码管理与品牌栏开关');
+    {
+      // 管理员建码免单，不需要订单
+      const created = await call('POST', '/api/qr/dynamic', {
+        token: adminToken,
+        body: { contentType: 'url', title: `E2E 活码 ${stamp}`, mediaUrls: [] },
+      });
+      const qrId = created.json?.data?.id || '';
+      const shortCode = created.json?.data?.shortCode || '';
+      check('管理员可创建测试活码', !!qrId && !!shortCode, shortCode);
+
+      if (qrId) {
+        const list = await call('GET', '/api/admin/dynamic-qrs', { token: adminToken });
+        const row = (list.json?.data?.items || []).find((i) => i.id === qrId);
+        check('新活码出现在管理列表', !!row, row?.shortCode);
+        check('新建活码默认展示品牌栏', row?.showBrandHeader === 1, String(row?.showBrandHeader));
+        check('列表带扫码次数字段', typeof row?.scanCount === 'number', String(row?.scanCount));
+        check('新活码不在回收站', row?.deleted === false);
+
+        const hideRes = await call('POST', `/api/admin/dynamic-qrs/${qrId}`, {
+          token: adminToken,
+          body: { showBrandHeader: 0 },
+        });
+        check('关闭品牌栏成功', hideRes.json?.success === true, hideRes.json?.message);
+
+        const pubHidden = await call('GET', `/api/qr/dynamic/${shortCode}`);
+        check('落地页取数能读到开关（0 = 隐藏）', pubHidden.json?.data?.showBrandHeader === 0, String(pubHidden.json?.data?.showBrandHeader));
+
+        const before = pubHidden.json?.data?.expiresAt;
+        const renewRes = await call('POST', `/api/admin/dynamic-qrs/${qrId}/renew`, {
+          token: adminToken,
+          body: { months: 1 },
+        });
+        check('续期接口返回 200', renewRes.json?.success === true, renewRes.json?.message);
+        const pubRenewed = await call('GET', `/api/qr/dynamic/${shortCode}`);
+        check('续期后到期时间往后推', new Date(pubRenewed.json?.data?.expiresAt) > new Date(before));
+
+        const delRes = await call('POST', `/api/admin/dynamic-qrs/${qrId}/delete`, { token: adminToken });
+        check('移入回收站成功', delRes.json?.success === true, delRes.json?.message);
+
+        const pubDeleted = await call('GET', `/api/qr/dynamic/${shortCode}`);
+        check('回收站中的活码扫码返回 404', pubDeleted.json?.success === false, pubDeleted.json?.code);
+        check('404 文案不暴露"被删除"', String(pubDeleted.json?.message || '').includes('未找到'), pubDeleted.json?.message);
+
+        const afterDelete = await call('GET', '/api/admin/dynamic-qrs', { token: adminToken });
+        const delRow = (afterDelete.json?.data?.items || []).find((i) => i.id === qrId);
+        check('管理列表中标记为已删除', delRow?.deleted === true, String(delRow?.deletedAt));
+        check('统计里在用总数不含回收站', typeof afterDelete.json?.data?.stats?.deleted === 'number');
+
+        const restoreRes = await call('POST', `/api/admin/dynamic-qrs/${qrId}/restore`, { token: adminToken });
+        check('恢复成功', restoreRes.json?.success === true);
+        const pubRestored = await call('GET', `/api/qr/dynamic/${shortCode}`);
+        check('恢复后扫码重新可用', pubRestored.json?.success === true);
+
+        const batchRes = await call('POST', '/api/admin/dynamic-qrs/batch', {
+          token: adminToken,
+          body: { ids: [qrId], action: 'show-brand' },
+        });
+        check('批量恢复品牌栏', batchRes.json?.success === true, batchRes.json?.data);
+        const pubBatch = await call('GET', `/api/qr/dynamic/${shortCode}`);
+        check('批量操作后开关生效', pubBatch.json?.data?.showBrandHeader === 1, String(pubBatch.json?.data?.showBrandHeader));
+
+        const badBatch = await call('POST', '/api/admin/dynamic-qrs/batch', {
+          token: adminToken,
+          body: { ids: [qrId], action: 'drop-table' },
+        });
+        check('未知批量动作被拒绝', badBatch.json?.success === false, badBatch.json?.message);
+
+        // 收尾：移入回收站（软删，不影响其它数据），保留记录便于人工核对
+        await call('POST', `/api/admin/dynamic-qrs/${qrId}/delete`, { token: adminToken }).catch(() => {});
+      }
+    }
   } finally {
     // 兜底恢复，避免脚本中断后留下脏配置
     if (dynamicPricing) {

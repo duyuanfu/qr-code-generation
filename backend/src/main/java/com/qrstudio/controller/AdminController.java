@@ -1,6 +1,7 @@
 package com.qrstudio.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.qrstudio.common.Result;
 import com.qrstudio.entity.DynamicQr;
 import com.qrstudio.entity.Order;
@@ -16,6 +17,7 @@ import com.qrstudio.mapper.PricingConfigMapper;
 import com.qrstudio.mapper.UserMapper;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -37,6 +39,7 @@ public class AdminController {
     private final PaymentQrCodeMapper paymentQrCodeMapper;
     private final OrderMapper orderMapper;
     private final DynamicQrMapper dynamicQrMapper;
+    private final JdbcTemplate jdbcTemplate;
 
     // ================= 1. 用户管理 =================
     @GetMapping("/users")
@@ -263,8 +266,9 @@ public class AdminController {
         List<DynamicQr> qrs = dynamicQrMapper.selectList(
                 new LambdaQueryWrapper<DynamicQr>()
                         .select(DynamicQr::getId, DynamicQr::getShortCode, DynamicQr::getContentType,
-                                DynamicQr::getTitle, DynamicQr::getUserId,
-                                DynamicQr::getExpiresAt, DynamicQr::getCreatedAt)
+                                DynamicQr::getTitle, DynamicQr::getUserId, DynamicQr::getExpiresAt,
+                                DynamicQr::getShowBrandHeader, DynamicQr::getDeletedAt,
+                                DynamicQr::getCreatedAt)
                         .orderByAsc(DynamicQr::getExpiresAt)
         );
 
@@ -276,14 +280,30 @@ public class AdminController {
             emailOf.put(u.getId(), u.getEmail());
         }
 
+        // 扫码次数同理：一次 GROUP BY 拿全表，别在循环里逐条 count。
+        // 回收站里的活码也保留统计，恢复后数字才对得上。
+        Map<String, Long> scanCountOf = new HashMap<>();
+        jdbcTemplate.query(
+                "SELECT qr_id, COUNT(*) AS cnt FROM scan_logs GROUP BY qr_id",
+                rs -> {
+                    scanCountOf.put(rs.getString("qr_id"), rs.getLong("cnt"));
+                });
+
         LocalDateTime now = LocalDateTime.now();
         List<ExpiringQrView> views = new ArrayList<>(qrs.size());
         int permanent = 0;
         int expired = 0;
         int within7 = 0;
         int within30 = 0;
+        int deleted = 0;
+        int hiddenBrand = 0;
 
         for (DynamicQr qr : qrs) {
+            boolean alive = qr.getDeletedAt() == null;
+            int brand = qr.getShowBrandHeader() == null ? 1 : qr.getShowBrandHeader();
+            if (alive && brand == 0) {
+                hiddenBrand++;
+            }
             ExpiringQrView v = new ExpiringQrView();
             v.setId(qr.getId());
             v.setShortCode(qr.getShortCode());
@@ -292,27 +312,35 @@ public class AdminController {
             v.setOwnerEmail(emailOf.get(qr.getUserId()));
             v.setExpiresAt(qr.getExpiresAt());
             v.setCreatedAt(qr.getCreatedAt());
+            // 存量行的 show_brand_header 可能还是 null（补列前的数据），统一按「展示」处理
+            v.setShowBrandHeader(brand);
+            v.setDeletedAt(qr.getDeletedAt());
+            v.setDeleted(!alive);
+            v.setScanCount(scanCountOf.getOrDefault(qr.getId(), 0L));
+            if (!alive) {
+                deleted++;
+            }
 
             if (qr.getExpiresAt() == null) {
                 v.setStatus("permanent");
                 // 长期有效没有「剩余天数」这回事，给 null 而不是哨兵值，
                 // 让前端不可能把 9223372036854775807 渲染成「还有 xx 天」
                 v.setDaysLeft(null);
-                permanent++;
+                if (alive) permanent++;
             } else {
                 long days = ChronoUnit.DAYS.between(now, qr.getExpiresAt());
                 // between() 按整天截断，当天到期会得到 0 —— 「今天到期」比「已过期」更贴近直觉
                 v.setDaysLeft(days);
                 if (days < 0) {
                     v.setStatus("expired");
-                    expired++;
+                    if (alive) expired++;
                 } else if (days <= 7) {
                     v.setStatus("expiring");
-                    within7++;
+                    if (alive) within7++;
                 } else {
                     v.setStatus("active");
                 }
-                if (days >= 0 && days <= 30) {
+                if (alive && days >= 0 && days <= 30) {
                     within30++;
                 }
             }
@@ -320,11 +348,14 @@ public class AdminController {
         }
 
         Map<String, Object> stats = new HashMap<>();
-        stats.put("total", qrs.size());
+        // total 只算在用的活码，回收站单独计数 —— 否则「共 20 条」里混着 3 条已删除，对不上账
+        stats.put("total", qrs.size() - deleted);
         stats.put("permanent", permanent);
         stats.put("expired", expired);
         stats.put("within7", within7);
         stats.put("within30", within30);
+        stats.put("deleted", deleted);
+        stats.put("hiddenBrand", hiddenBrand);
 
         Map<String, Object> data = new HashMap<>();
         data.put("items", views);
@@ -346,5 +377,212 @@ public class AdminController {
         private Long daysLeft;
         /** permanent | expired | expiring | active */
         private String status;
+        /** 落地页品牌栏是否展示：1 展示，0 隐藏 */
+        private Integer showBrandHeader;
+        /** 软删除时间；非空即已进回收站 */
+        private LocalDateTime deletedAt;
+        private boolean deleted;
+        /** 累计扫码次数 */
+        private Long scanCount;
+    }
+
+    // ================= 7. 活码写操作（编辑 / 续期 / 回收站 / 批量） =================
+
+    /**
+     * 按 id 取活码，但只取调用方需要的列。
+     *
+     * <p>不用 {@code selectById}：它会把 media_urls / style_config 两个 LONGTEXT 一起读出来，
+     * 一条活码可能几 MB，而这些写操作只用得到 id / expires_at / deleted_at。
+     * 不传列名时退化为「只查 id」，仅用于存在性校验。
+     */
+    @SafeVarargs
+    private final DynamicQr liteQr(String id, com.baomidou.mybatisplus.core.toolkit.support.SFunction<DynamicQr, ?>... columns) {
+        LambdaQueryWrapper<DynamicQr> wrapper = new LambdaQueryWrapper<DynamicQr>().eq(DynamicQr::getId, id);
+        if (columns.length == 0) {
+            wrapper.select(DynamicQr::getId);
+        } else {
+            wrapper.select(columns);
+        }
+        return dynamicQrMapper.selectOne(wrapper);
+    }
+
+    /**
+     * 更新活码的可编辑字段。
+     *
+     * <p>刻意不接收 contentType / mediaUrls：换类型或换文件意味着订单额度、体积阶梯、
+     * 甚至落地页版式全部要重算，那不是「编辑」而是「重新下单」。需要改内容就让客户重新生成。
+     *
+     * <p>用 LambdaUpdateWrapper 而不是「查出来改再 updateById」：后者会把整行读进内存，
+     * 包括 media_urls / style_config 两个 LONGTEXT，为了改个标题反复搬运几 MB 不值当。
+     */
+    @Data
+    public static class UpdateQrRequest {
+        private String title;
+        private String description;
+        private Integer showBrandHeader;
+    }
+
+    @PostMapping("/dynamic-qrs/{id}")
+    public Result<?> updateDynamicQr(@PathVariable("id") String id, @RequestBody UpdateQrRequest req) {
+        if (liteQr(id, DynamicQr::getId) == null) {
+            return Result.error(404, "活码不存在");
+        }
+
+        LambdaUpdateWrapper<DynamicQr> update = new LambdaUpdateWrapper<DynamicQr>()
+                .eq(DynamicQr::getId, id);
+        boolean touched = false;
+
+        if (req.getTitle() != null) {
+            String title = req.getTitle().trim();
+            if (title.isEmpty()) {
+                return Result.error(400, "标题不能为空");
+            }
+            update.set(DynamicQr::getTitle, title);
+            touched = true;
+        }
+        if (req.getDescription() != null) {
+            // 允许传空串来清空描述，所以这里不能用「非空才更新」
+            update.set(DynamicQr::getDescription, req.getDescription());
+            touched = true;
+        }
+        if (req.getShowBrandHeader() != null) {
+            update.set(DynamicQr::getShowBrandHeader, req.getShowBrandHeader() == 1 ? 1 : 0);
+            touched = true;
+        }
+
+        if (!touched) {
+            return Result.error(400, "没有需要更新的字段");
+        }
+
+        update.set(DynamicQr::getUpdatedAt, LocalDateTime.now());
+        dynamicQrMapper.update(null, update);
+        return Result.ok("已保存");
+    }
+
+    @Data
+    public static class RenewQrRequest {
+        /** 续期月数，默认 3（与默认定价的 validMonths 一致） */
+        private Integer months;
+    }
+
+    /**
+     * 续期：从「今天」和「原到期日」中较晚的那个往后加月份。
+     *
+     * <p>这样过期很久的活码续 3 个月拿到的是「今天 + 3 个月」，而不是「过期日 + 3 个月」
+     * （后者可能续完还是过期状态）。未过期的活码则从原到期日往后顺延，不吞掉剩余时间。
+     */
+    @PostMapping("/dynamic-qrs/{id}/renew")
+    public Result<?> renewDynamicQr(@PathVariable("id") String id, @RequestBody(required = false) RenewQrRequest req) {
+        int months = req == null || req.getMonths() == null ? 3 : req.getMonths();
+        if (months < 1 || months > 36) {
+            return Result.error(400, "续期月数需在 1~36 之间");
+        }
+
+        DynamicQr qr = liteQr(id, DynamicQr::getId, DynamicQr::getExpiresAt);
+        if (qr == null) {
+            return Result.error(404, "活码不存在");
+        }
+        if (qr.getExpiresAt() == null) {
+            // expires_at 为空表示长期有效，续期会把「永久」降级成「有期限」，属于反向操作
+            return Result.error(400, "该活码长期有效，无需续期");
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime base = qr.getExpiresAt().isAfter(now) ? qr.getExpiresAt() : now;
+        LocalDateTime next = base.plusMonths(months);
+
+        dynamicQrMapper.update(null, new LambdaUpdateWrapper<DynamicQr>()
+                .eq(DynamicQr::getId, id)
+                .set(DynamicQr::getExpiresAt, next)
+                .set(DynamicQr::getUpdatedAt, now));
+
+        return Result.ok("已续期 " + months + " 个月，新到期日 " + next.toLocalDate(), next);
+    }
+
+    /**
+     * 移入回收站（软删除）。
+     *
+     * <p>只写 deleted_at，**不删 scan_logs、更不删上传的物理文件**：
+     * <ul>
+     *   <li>扫码日志是运营数据，删了等于把历史访问量一起抹掉</li>
+     *   <li>上传走 SHA-256 内容哈希去重，同一个文件可能被多个活码引用 ——
+     *       顺手删文件会让别的活码扫码 404，物理文件只能交给离线 GC 处理</li>
+     * </ul>
+     */
+    @PostMapping("/dynamic-qrs/{id}/delete")
+    public Result<?> deleteDynamicQr(@PathVariable("id") String id) {
+        DynamicQr qr = liteQr(id, DynamicQr::getId, DynamicQr::getDeletedAt);
+        if (qr == null) {
+            return Result.error(404, "活码不存在");
+        }
+        if (qr.getDeletedAt() != null) {
+            return Result.ok("该活码已在回收站中");
+        }
+        dynamicQrMapper.update(null, new LambdaUpdateWrapper<DynamicQr>()
+                .eq(DynamicQr::getId, id)
+                .set(DynamicQr::getDeletedAt, LocalDateTime.now())
+                .set(DynamicQr::getUpdatedAt, LocalDateTime.now()));
+        return Result.ok("已移入回收站，扫码将返回 404（可随时恢复）");
+    }
+
+    @PostMapping("/dynamic-qrs/{id}/restore")
+    public Result<?> restoreDynamicQr(@PathVariable("id") String id) {
+        if (liteQr(id) == null) {
+            return Result.error(404, "活码不存在");
+        }
+        dynamicQrMapper.update(null, new LambdaUpdateWrapper<DynamicQr>()
+                .eq(DynamicQr::getId, id)
+                .set(DynamicQr::getDeletedAt, null)
+                .set(DynamicQr::getUpdatedAt, LocalDateTime.now()));
+        return Result.ok("已恢复到活码列表");
+    }
+
+    @Data
+    public static class BatchQrRequest {
+        private List<String> ids;
+        /** show-brand | hide-brand | delete | restore */
+        private String action;
+    }
+
+    /** 批量操作：品牌栏全开/全关、批量入回收站、批量恢复 */
+    @PostMapping("/dynamic-qrs/batch")
+    public Result<?> batchUpdateDynamicQr(@RequestBody BatchQrRequest req) {
+        List<String> ids = req.getIds();
+        if (ids == null || ids.isEmpty()) {
+            return Result.error(400, "请先选择活码");
+        }
+        if (ids.size() > 200) {
+            return Result.error(400, "单次最多操作 200 条");
+        }
+        String action = req.getAction() == null ? "" : req.getAction();
+
+        LambdaUpdateWrapper<DynamicQr> update = new LambdaUpdateWrapper<DynamicQr>()
+                .in(DynamicQr::getId, ids)
+                .set(DynamicQr::getUpdatedAt, LocalDateTime.now());
+
+        String message;
+        switch (action) {
+            case "show-brand":
+                update.set(DynamicQr::getShowBrandHeader, 1);
+                message = "已恢复品牌栏展示";
+                break;
+            case "hide-brand":
+                update.set(DynamicQr::getShowBrandHeader, 0);
+                message = "已隐藏品牌栏";
+                break;
+            case "delete":
+                update.set(DynamicQr::getDeletedAt, LocalDateTime.now());
+                message = "已移入回收站";
+                break;
+            case "restore":
+                update.set(DynamicQr::getDeletedAt, null);
+                message = "已恢复";
+                break;
+            default:
+                return Result.error(400, "不支持的批量操作: " + action);
+        }
+
+        int affected = dynamicQrMapper.update(null, update);
+        return Result.ok(message + "（" + affected + " 条）", affected);
     }
 }

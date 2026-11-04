@@ -263,6 +263,8 @@ public class DynamicQrController {
                     .mediaUrls(mediaUrlsJson)
                     .styleConfig(styleConfigJson)
                     .expiresAt(expiresAt)
+                    // 新建活码默认展示落地页品牌栏；要「干净页面」由管理员在后台逐条关闭
+                    .showBrandHeader(1)
                     .createdAt(LocalDateTime.now())
                     .updatedAt(LocalDateTime.now())
                     .build();
@@ -289,6 +291,11 @@ public class DynamicQrController {
     public Result<?> getDynamicQr(@PathVariable("shortCode") String shortCode, HttpServletRequest request) {
         DynamicQr qr = dynamicQrMapper.selectOne(new LambdaQueryWrapper<DynamicQr>().eq(DynamicQr::getShortCode, shortCode));
         if (qr == null) {
+            return Result.error(404, "未找到该二维码内容");
+        }
+        // 已进回收站的活码对外等同于不存在：返回同一句 404，
+        // 不透露「曾经存在但被管理员删除」，避免客户拿着旧码来问为什么打不开
+        if (qr.getDeletedAt() != null) {
             return Result.error(404, "未找到该二维码内容");
         }
 

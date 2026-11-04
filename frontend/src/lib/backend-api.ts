@@ -29,6 +29,11 @@ export interface DynamicQrRecord {
   styleConfig?: string | null;
   /** 服务到期时间（下单时的定价项 validMonths 决定），null 表示长期有效 */
   expiresAt?: string | null;
+  /**
+   * 落地页顶部品牌栏是否展示：1 展示（默认），0 隐藏。
+   * 后端补列前的存量数据可能返回 null，前端一律按「展示」处理。
+   */
+  showBrandHeader?: number | null;
   createdAt?: string | null;
 }
 

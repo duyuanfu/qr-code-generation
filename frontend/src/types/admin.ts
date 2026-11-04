@@ -114,14 +114,26 @@ export interface AdminDynamicQr {
   /** 剩余天数：负数=已过期天数，0=今天到期；长期有效为 null */
   daysLeft?: number | null;
   status: QrLifecycleStatus;
+  /** 落地页顶部品牌栏是否展示：1 展示，0 隐藏 */
+  showBrandHeader: number;
+  /** 软删除时间；非空即已进回收站 */
+  deletedAt?: string | null;
+  deleted?: boolean;
+  /** 累计扫码次数 */
+  scanCount?: number;
 }
 
 export interface ExpiringQrStats {
+  /** 在用活码总数（不含回收站） */
   total: number;
   permanent: number;
   expired: number;
   within7: number;
   within30: number;
+  /** 回收站条数 */
+  deleted?: number;
+  /** 已隐藏品牌栏的活码数 */
+  hiddenBrand?: number;
 }
 
 export interface ExpiringQrResponse {

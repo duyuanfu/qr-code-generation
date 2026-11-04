@@ -20,6 +20,10 @@ CREATE TABLE IF NOT EXISTS dynamic_qrs (
     media_urls LONGTEXT NOT NULL,
     style_config LONGTEXT,
     expires_at DATETIME NULL,
+    -- 落地页顶部品牌栏（logo + 回首页链接）是否展示：1 展示，0 隐藏
+    show_brand_header TINYINT NOT NULL DEFAULT 1,
+    -- 软删除时间：非空表示已进回收站，落地页一律 404
+    deleted_at DATETIME NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_short_code (short_code),

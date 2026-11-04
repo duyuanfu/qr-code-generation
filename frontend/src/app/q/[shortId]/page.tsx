@@ -94,6 +94,21 @@ export default async function MobileLandingPage({ params }: Props) {
     : '';
 
   /**
+   * 品牌栏开关（管理员在后台逐条控制）。
+   *
+   * 注意这不是「少渲染一个组件」那么简单：品牌栏是 fixed 定位，内容区靠
+   * `pt-landing-header`（3rem + 安全区）给它让位。只隐藏组件而不撤掉留白，
+   * 页面顶部会空出一条 —— PDF 页最明显，因为下面直接就是 iframe。
+   * 反过来撤掉留白后必须补 `pt-[var(--safe-top)]`，否则刘海屏会压住内容。
+   */
+  const showBrand = qr.showBrandHeader !== 0;
+  const contentPad = showBrand ? 'pt-landing-header' : 'pt-[var(--safe-top)]';
+  /** 到期浮层要贴着「品牌栏下沿」，没有品牌栏时就贴着安全区下沿 */
+  const pillTop = showBrand
+    ? 'top-[calc(var(--landing-header-h)+0.5rem)]'
+    : 'top-[calc(var(--safe-top)+0.5rem)]';
+
+  /**
    * 渲染策略：类型（contentType）决定用哪种版式，文件本身决定这个版式能不能用。
    *
    * - 用户给「文件」类型时，不管里面装的是 PDF 还是图片，一律按文件资源管理器展示，
@@ -109,9 +124,15 @@ export default async function MobileLandingPage({ params }: Props) {
   const showGallery = qr.contentType === 'image' && imageItems.length > 0;
   const showVideo = qr.contentType === 'video' && videoItems.length > 0;
 
-  /** 到期提示：浮在内容之上，不占布局、不打断阅读 */
+  /**
+   * 到期提示：浮在内容之上，不占布局、不打断阅读
+   *
+   * `w-max` 不能省。fixed + left:50% + width:auto 时，shrink-to-fit 的宽度上限
+   * 只按「从 50% 到右边」算（375 屏上约 187px），文案会被压成两行、整条向右偏，
+   * 看着像贴到了右边缘。w-max 让宽度按内容撑开，再用 max-w 兜住窄屏。
+   */
   const expiryPill = expired ? (
-    <div className="pointer-events-none fixed left-1/2 top-[calc(var(--landing-header-h)+0.5rem)] z-40 -translate-x-1/2 rounded-full bg-amber-500/95 px-3 py-1.5 text-xs font-medium text-white shadow-lg backdrop-blur">
+    <div className={`pointer-events-none fixed left-1/2 ${pillTop} z-40 w-max max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-full bg-amber-500/95 px-3 py-1.5 text-center text-xs font-medium text-white shadow-lg backdrop-blur`}>
       服务已于 {expireText} 到期，请联系制作者续费
     </div>
   ) : null;
@@ -120,8 +141,8 @@ export default async function MobileLandingPage({ params }: Props) {
   if (showPdf && pdfItem) {
     return (
       <main className="min-h-screen w-full overflow-x-hidden bg-white m-0 p-0">
-        <LandingHeader />
-        <div className="pt-landing-header">
+        {showBrand && <LandingHeader />}
+        <div className={contentPad}>
           <MobilePdfCanvasViewer pdfUrl={pdfItem.url} />
         </div>
         {expiryPill}
@@ -133,8 +154,8 @@ export default async function MobileLandingPage({ params }: Props) {
   if (showGallery) {
     return (
       <main className="min-h-screen w-full overflow-x-hidden bg-white m-0 p-0">
-        <LandingHeader />
-        <div className="pt-landing-header">
+        {showBrand && <LandingHeader />}
+        <div className={contentPad}>
           <MobileImageViewer items={imageItems} title={qr.title} />
         </div>
         {expiryPill}
@@ -146,8 +167,8 @@ export default async function MobileLandingPage({ params }: Props) {
   if (showVideo) {
     return (
       <main className="min-h-screen w-full overflow-x-hidden bg-black m-0 p-0">
-        <LandingHeader variant="dark" />
-        <div className="pt-landing-header">
+        {showBrand && <LandingHeader variant="dark" />}
+        <div className={contentPad}>
           <MobileVideoPlayer items={videoItems} title={qr.title} />
         </div>
         {expiryPill}
@@ -158,8 +179,8 @@ export default async function MobileLandingPage({ params }: Props) {
   // ④ 文件 / 附件：像文件资源管理器一样一行一个，整行可点下载
   return (
     <main className="min-h-screen bg-slate-50">
-      <LandingHeader />
-      <div className="pt-landing-header">
+      {showBrand && <LandingHeader />}
+      <div className={contentPad}>
         <div className="mx-auto w-full max-w-2xl">
           <div className="px-4 pb-1 pt-4">
             <h1 className="truncate text-base font-semibold text-slate-900">

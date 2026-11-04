@@ -214,7 +214,7 @@ export const FEATURES = { batchGenerate: false } as const;
 > 高达 **305 kB**，其中绝大部分用户根本用不上（批量生成还关着）。改成按需加载后首页降到 **130 kB**。
 > 加新 tab 时先问一句：这个组件的依赖，是不是每个访客都该下载？
 
-#### 过期提醒面板（`admin` → 过期提醒）
+#### 活码管理面板（`admin` → 活码管理）
 
 数据来自 `GET /api/admin/dynamic-qrs`，服务端统一算好 `daysLeft` 与 `status`，前端只负责展示与分桶：
 
@@ -227,9 +227,64 @@ export const FEATURES = { batchGenerate: false } as const;
 
 - 剩余天数**必须用服务器时间**算，客户端时钟一偏就会出现「后台说还有 1 天、落地页已提示到期」。
 - 接口只 `select` 面板要显示的列：`media_urls` / `style_config` 是 LONGTEXT，
-  为算个天数把整表大字段拖进内存不值当。
+  为算个天数把整表大字段拖进内存不值当。写操作（改开关、续期、软删）同理，
+  走 `liteQr()` 只取 id / expires_at / deleted_at，别用 `selectById` 把整行读出来。
 - 「复制提醒」生成一段可直接发给客户的话术（含到期日与活码链接），省掉运营每天手打。
-- 只提醒、不改状态：到期后落地页仍可访问，只是顶部出现续费提示（见 §5.3 服务有效期）。
+- 续期从「今天」和「原到期日」里较晚的那个往后加月份：过期很久的活码续 3 个月拿到的是
+  「今天 + 3 个月」，而不是「过期日 + 3 个月」（后者续完还是过期）。`expires_at` 为空
+  （长期有效）时拒绝续期 —— 那会把「永久」降级成「有期限」。
+
+##### 品牌栏开关（`show_brand_header`）
+
+落地页顶部那条「logo + 回首页」栏由 `dynamic_qrs.show_brand_header` 逐条控制，默认 1。
+
+**隐藏它不是"少渲染一个组件"**，`LandingHeader` 是 `fixed`，内容靠 `pt-landing-header`
+（3rem + 安全区）让位，三处必须同时改，漏一处只有真机才看得出来：
+
+| 位置 | 有品牌栏 | 无品牌栏 |
+|---|---|---|
+| 内容区顶部内边距 | `pt-landing-header` | `pt-[var(--safe-top)]`（否则刘海压住内容） |
+| 到期浮层 `top` | `calc(var(--landing-header-h) + 0.5rem)` | `calc(var(--safe-top) + 0.5rem)`（否则浮层飘在半空） |
+| `LandingHeader` 本身 | 渲染 | 不渲染（否则顶部空一条白边，PDF 页最明显） |
+
+关掉后页面就没有回首页入口了，这是产品上的明确选择（客户买「干净页面」）。
+新建活码一律默认展示，要关只能在后台逐条或批量关。
+
+**到期浮层必须带 `w-max`**。它是 `fixed left-1/2 -translate-x-1/2`，如果只写这个，
+`width:auto` 的 shrink-to-fit 上限按「从 50% 到包含块右边」算（375 屏约 187px），
+文案会被压成两行、整条向右偏、贴着右边缘。正确写法：
+
+```
+w-max max-w-[calc(100vw-2rem)] -translate-x-1/2
+```
+
+实测 375px 下浮层 271px 宽、左右边距各 52px 才真正居中。
+这类「不报错、不溢出、只有截图或量坐标才看得出来」的偏差，改完务必用
+`getBoundingClientRect()` 对比 `leftMargin` / `rightMargin`，别用眼睛看截图
+（截图是 DPR=2 的物理像素，目测坐标会差一倍）。
+
+##### 活码管理面板（`admin` → 活码管理）
+
+统计四张卡（在用 / 已过期 / 7 天内到期 / 回收站）+ 六个筛选（全部 / 需跟进 / 7 天内到期 /
+已过期 / 长期有效 / 回收站）+ 搜索 + 批量选择。逐条可切品牌栏、续期、删除/恢复、打开落地页。
+
+**tab 从 4 个变 5 个后，`flex-wrap` 在 375px 下会挤成 3+2**（每个 tab 约 110px，一行放不下），
+第二行只占 2/3 宽、重心偏左、多占一整行高度。移动端改用 `grid-cols-5` + 两字简称
+（用户/活码/价格/收款/订单），`sm:` 起恢复 `flex` + 图标 + 全称。和其他 tab 栏同一套做法。
+
+##### 删除 = 软删除
+
+`deleted_at` 非空即进回收站：落地页返回 404（文案与「不存在」完全一致，不透露曾被删除），
+默认列表过滤掉，`?` 前端「回收站」筛选里可恢复。
+
+**不删 `scan_logs`、不删上传的物理文件**：
+
+- 扫码日志是运营数据，删记录顺手抹掉访问量就再也找不回来；
+- 上传走 SHA-256 内容哈希去重，**同一个文件可能被多个活码引用**，删文件会让别的活码扫码 404。
+  物理文件只能交给离线 GC（扫引用 + 定期清理），不做在删除路径里。
+
+所以这里不需要「输入短码二次确认」那种重交互 —— 反正是可逆的。
+
 
 ### 5.4 前端付费门禁：预览隔离
 
@@ -411,7 +466,12 @@ python .codebuddy/skills/ui-ux-pro-max/scripts/search.py "mobile viewport fixed 
 | GET/POST | `/api/admin/pricing` | admin | 价目与收费开关（按 `sortOrder` 排序，含体积阶梯四件套与 `validMonths`） |
 | GET/POST | `/api/admin/payment-config` | admin | 扫码提示文案与付费墙总开关 |
 | GET/POST | `/api/admin/payment-qr-codes` | admin | 各渠道收款码（`wechat` / `alipay`）图片与启停 |
-| GET | `/api/admin/dynamic-qrs` | admin | 活码服务期清单（含 `daysLeft` / `status`，供「过期提醒」面板） |
+| GET | `/api/admin/dynamic-qrs` | admin | 活码清单（`daysLeft`/`status`/`showBrandHeader`/`scanCount`/`deletedAt`，供「活码管理」面板） |
+| POST | `/api/admin/dynamic-qrs/{id}` | admin | 改标题 / 描述 / 品牌栏开关（**不接受** contentType、mediaUrls） |
+| POST | `/api/admin/dynamic-qrs/{id}/renew` | admin | 续期，body `{months}`，默认 3；长期有效的码拒绝续期 |
+| POST | `/api/admin/dynamic-qrs/{id}/delete` | admin | 软删除进回收站（不删 scan_logs、不删物理文件） |
+| POST | `/api/admin/dynamic-qrs/{id}/restore` | admin | 从回收站恢复 |
+| POST | `/api/admin/dynamic-qrs/batch` | admin | 批量，body `{ids, action}`，action ∈ `show-brand`/`hide-brand`/`delete`/`restore` |
 | GET | `/api/admin/orders` | admin | 订单流水 |
 | POST | `/api/admin/orders/{id}/approve` | admin | 确认到账 |
 | GET | `/api/system/network` | 公开 | 局域网 IP 探测（自定义域名提示用），**已过滤虚拟网卡**，见下 |
@@ -440,7 +500,7 @@ python .codebuddy/skills/ui-ux-pro-max/scripts/search.py "mobile viewport fixed 
 `backend/src/main/resources/schema.sql`（7 张表，全部 `CREATE TABLE IF NOT EXISTS` + `INSERT IGNORE` 种子数据，容器每次启动幂等执行）：
 
 - `users` — `role` ∈ `user`/`admin`，`status` ∈ `active`/`disabled`
-- `dynamic_qrs` — `short_code` 唯一；`media_urls` / `style_config` 均存 **JSON 字符串**（`LONGTEXT`），取回后前端需 `JSON.parse`；`content_type` ∈ `url`/`text`/`vcard`/`image`/`video`/`pdf`/`file`（`wifi` 已于 v2 迁移下线）；`expires_at` 为服务到期时间（`valid_months` 换算而来，可空）
+- `dynamic_qrs` — `short_code` 唯一；`media_urls` / `style_config` 均存 **JSON 字符串**（`LONGTEXT`），取回后前端需 `JSON.parse`；`content_type` ∈ `url`/`text`/`vcard`/`image`/`video`/`pdf`/`file`（`wifi` 已于 v2 迁移下线）；`expires_at` 为服务到期时间（`valid_months` 换算而来，可空）；`show_brand_header` 1/0 控制落地页顶部品牌栏；`deleted_at` 非空即进回收站（落地页 404）
 - `scan_logs` — 每次落地页访问一条
 - `orders` — `status` ∈ `pending` / `pending_review` / `paid` / `used` / `expired`；`action_type` 存**实际命中的计费键**（如 `dynamic_qr.video`）
 - `pricing_configs` — 细分键 × 9 行（见 §5.3 价目表），体积阶梯字段 `included_size_mb` / `step_size_mb` / `step_price`，计价方式 `per_item`，服务期 `valid_months`，排序 `sort_order`
@@ -581,7 +641,8 @@ docker compose up -d --build
 | UI 交互自动化 | ❌ 未覆盖。付费弹窗、二维码渲染与导出、批量生成/解码、PDF Canvas、Admin 面板点击需人工验证 |
 | Docker 镜像构建 | ✅ 已纳入 CI，但默认不跑，需在 Actions 里手动触发 `workflow_dispatch` |
 | 登录爆破防护 | ⚠️ `/api/auth/login` 仍无限流（上传已加），建议复用 `TokenBucketRateLimiter` 按 IP 限速 |
-| 活码删除接口 | ❌ 缺失。admin 只能看不能删，清理脏数据只能直连 MySQL 写一次性脚本（本轮清掉 39 条就是这么干的）。补一个 `DELETE /api/admin/dynamic-qrs/{id}` 时记得**同时删 `scan_logs`**（无外键） |
+| 活码删除 | ✅ 已有软删除（回收站）。**没有硬删除接口** —— 且不要为了"清空回收站"去写脚本删 `scan_logs`：那是唯一的访问量数据。物理文件另需 GC，见 §5.3 品牌栏开关一节末尾 |
+| 回收站体积 | ⚠️ 回收站永不过期，长期会积累测试数据（每次跑 `e2e-admin` 留 1 条）。真要清理时按 `deleted_at < 90 天` 人工确认后物理删，**仍不需要动 `scan_logs`**（那会连带抹掉统计） |
 | 上传文件生命周期 | ⚠️ 上传即落盘，但「上传了却没生成活码」的文件无人回收，长期只增不减。反过来，手动清理上传目录会让存量活码静默 404 —— 本轮删除遗留目录后 34 条活码一夜变白屏，就是没有引用计数的代价 |
 | e2e 脚本不回收自建数据 | ⚠️ 每次跑 `e2e-*.mjs` 都会在库里留下「E2E 联调活码 / 免费模式活码」。要么用独立测试库，要么脚本收尾时自删 |
 | 迁移前遗留数据 `frontend/data/` | **保留未删**（`db.json` + `sqlite.db`），未导入 MySQL。`uploads/` 子目录已于 2026-10-31 清理 |

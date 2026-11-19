@@ -1,7 +1,7 @@
 # QR Studio - 全能二维码生成与美化工作台
 
 <p align="center">
-  <img src="public/poster-promo-light-cn.png" width="450" alt="QR Studio 宣传海报" style="border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.1);" />
+  <img src="frontend/public/poster-promo-light-cn.png" width="450" alt="QR Studio 宣传海报" style="border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.1);" />
 </p>
 
 高颜值、全功能、不限扫码次数的现代二维码 Web SaaS 平台。支持文字、网址、电子名片、图片画廊、高清视频流与各类常用文档附件的二维码生成、深度美化与批量作业。静态码永久有效，动态活码含 **3 个月服务期**（到期续费）。

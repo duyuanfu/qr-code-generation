@@ -24,6 +24,8 @@ public class PricingService {
 
     public static final String ACTION_DYNAMIC = "dynamic_qr";
     public static final String ACTION_EXPORT = "static_export";
+    /** 二维码动图（GIF）导出：一次生成扣一次，与静态导出同属「一次性交付物」 */
+    public static final String ACTION_GIF = "gif_export";
 
     private final PricingConfigMapper pricingConfigMapper;
 

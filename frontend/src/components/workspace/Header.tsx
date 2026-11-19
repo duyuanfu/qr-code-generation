@@ -2,7 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { QrCode, Layers, ScanLine, Sparkles, ShieldAlert, LogOut, LogIn } from 'lucide-react';
+import { QrCode, Layers, ScanLine, Sparkles, ShieldAlert, LogOut, LogIn, Clapperboard } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/components/auth/AuthContext';
@@ -81,6 +81,13 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, onTabChange }) => {
         {/* 桌面端的模式切换；手机端挪到下面一行横滑 */}
         <div className="hidden items-center rounded-xl bg-slate-100 p-1 md:flex">
           {TABS.map((t) => renderTab(t))}
+          <Link
+            href="/gif"
+            className="ml-1 flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium text-slate-600 transition-all hover:text-slate-900"
+          >
+            <Clapperboard className="h-4 w-4" aria-hidden="true" />
+            动图导出
+          </Link>
         </div>
 
         {/* 右侧账号区 */}
@@ -140,6 +147,13 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, onTabChange }) => {
       {/* 手机端：横向滚动的 tab 行，不换行、不挤压 */}
       <div className="flex gap-1 overflow-x-auto bg-slate-100/80 px-2 pb-2 pt-0.5 md:hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {TABS.map((t) => renderTab(t, true))}
+        <Link
+          href="/gif"
+          className="flex min-h-[40px] shrink-0 items-center gap-1.5 rounded-lg px-3 text-[13px] font-medium text-slate-600 hover:text-slate-900"
+        >
+          <Clapperboard className="h-4 w-4" aria-hidden="true" />
+          动图
+        </Link>
       </div>
     </header>
   );

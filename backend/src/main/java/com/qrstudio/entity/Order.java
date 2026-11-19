@@ -25,8 +25,10 @@ public class Order implements Serializable {
     private String userEmail;
     private String actionType; // "dynamic_qr" | "static_export"
     private BigDecimal amount;
-    private String status; // "pending" | "pending_review" | "paid" | "expired"
+    private String status; // "pending" | "pending_review" | "paid" | "used" | "expired"
     private String paymentVoucher;
+    /** 一次性交付物的产物地址（GIF 导出），null 表示还没产出过 */
+    private String resultUrl;
     private LocalDateTime createdAt;
     private LocalDateTime paidAt;
 }

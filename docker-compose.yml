@@ -22,6 +22,9 @@ services:
   backend:
     build:
       context: ./backend
+      args:
+        # 国内服务器构建时换 Ubuntu 源；海外构建留空即可（.env 里写 APT_MIRROR=）
+        APT_MIRROR: ${APT_MIRROR-mirrors.aliyun.com}
     container_name: qr-studio-backend
     restart: unless-stopped
     depends_on:

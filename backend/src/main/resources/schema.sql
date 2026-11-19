@@ -50,6 +50,8 @@ CREATE TABLE IF NOT EXISTS orders (
     amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
     status VARCHAR(32) NOT NULL DEFAULT 'pending',
     payment_voucher VARCHAR(255),
+    -- 一次性交付物的产物地址（GIF 导出）：同一笔订单重复请求直接返回它，不重复扣费
+    result_url VARCHAR(255),
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     paid_at DATETIME,
     INDEX idx_order_no (order_no),
@@ -112,7 +114,9 @@ VALUES
 ('price-dynamic-qr-file', 'dynamic_qr.file', '动态活码 · 文件下载（每个）', 6.00, 1),
 ('price-dynamic-qr-video', 'dynamic_qr.video', '动态活码 · 视频播放（每条）', 8.00, 1),
 -- 静态码内容不落库、无服务端成本，永久有效；收费点是导出真实内容的高清 PNG（单张或批量 ZIP）
-('price-static-export', 'static_export', '二维码图片导出（单张 / 批量 ZIP）', 2.00, 1);
+('price-static-export', 'static_export', '二维码图片导出（单张 / 批量 ZIP）', 2.00, 1),
+-- 动图导出：产物是文件，不存在服务期（valid_months 由 SchemaMigrator 置 0）
+('price-gif-export', 'gif_export', '二维码动图（GIF）导出', 3.00, 1);
 
 -- Initialize default payment config if empty
 INSERT IGNORE INTO payment_configs (id, qr_image_url, qr_type, notice_text, enabled)

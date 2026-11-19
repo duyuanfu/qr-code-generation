@@ -75,6 +75,15 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- QR 解码校验（GIF 可扫性复核）：纯 Java，约 500KB，无 native 依赖。
+             刻意不用 OpenCV：JavaCPP Presets 单平台 native 250MB 起步且跑不了 Alpine，
+             wechat_qrcode 引擎在 bytedeco 里也没有预编译。 -->
+        <dependency>
+            <groupId>com.google.zxing</groupId>
+            <artifactId>core</artifactId>
+            <version>3.5.3</version>
+        </dependency>
+
         <!-- Commons Codec for SHA-256 / Hex -->
         <dependency>
             <groupId>commons-codec</groupId>

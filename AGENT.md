@@ -17,6 +17,10 @@ QR Studio 是一个二维码 SaaS 工作台，两条业务线：
 2. **动态活码**（图片 / 视频 / PDF / 通用附件）
    - 码内只编码 6 位短码（`/q/{shortCode}`），落地页内容可随时替换而**不用重印二维码**。
    - 元数据落 MySQL，文件落磁盘卷，扫码落地页由 Next.js 服务端渲染直出。
+3. **GIF 动图导出**（`/gif`）
+   - 把用户自己的二维码贴到一张海报上，产出一张 4.68 秒的循环动图，供「截图保存后扫一扫」。
+   - **唯一有服务端图像渲染的业务线**：Java2D 合成 117 帧 + ffmpeg 两遍编码，见 §5.6。
+   - 一次性计费（`gif_export`），与静态码导出同语义：买的是「导出这一次」，产物无服务期。
 
 在此之上叠了一层**订阅收费墙 + 管理后台**：普通用户生成活码 / 无水印导出需付费，管理员免单。
 
@@ -59,6 +63,8 @@ qr-code-generation/
 | 数据库 | MySQL 8（`utf8mb4_unicode_ci`） | 建表脚本 `backend/src/main/resources/schema.sql`，`sql.init.mode=always` 幂等执行 |
 | 鉴权 | JJWT 0.12 + BCrypt | 双通道取 token：`Authorization: Bearer` 或 Cookie `token` |
 | 二维码 | `qr-code-styling` | ⚠️ 中文数据**必须**过 `toQRCodeUTF8()`，否则扫码必乱码 |
+| 二维码解码 | 前端 `@zxing/library`；后端 `com.google.zxing:core` 3.5.3 | ⚠️ **不引入 OpenCV**，理由见 §5.6「为什么不是 OpenCV」 |
+| 动图渲染 | Java2D（`BufferedImage`）+ ffmpeg 7 | ⚠️ ffmpeg 是**运行时硬依赖**，镜像必须用 `17-jre-jammy`，见 §5.6 |
 | 文件存储 | 本地磁盘卷 + SHA-256 命名 | 见 §8 上传管道 |
 | PDF | Canvas 矢量直绘 | ⚠️ 移动端**严禁**直接用 `iframe` 打开 PDF（微信/安卓白屏或强下载） |
 
@@ -78,26 +84,33 @@ frontend/src/
 │   ├── auth/                     # AuthContext / AuthModal / ClientAuthWrapper
 │   ├── landing/                  # LandingHeader / MobilePdfCanvasViewer / MobileImageViewer / MobileVideoPlayer / MobileFileList / MediaViewer / PdfViewerModal / ShareButton
 │   ├── qr/QRCodeCanvas.tsx       # 封装 qr-code-styling
+│   ├── gif/                      # GifWorkbench / GifCanvasPreview / GifParamPanel
 │   ├── ui/                       # button / input / card / badge / tabs / label
 │   └── workspace/                # Header / ContentForm / StyleConfigPanel / DualPreview
 │                                 # PaymentModal / BatchGenerator / BatchDecoder …
 ├── lib/
 │   ├── api-client.ts             # 浏览器侧统一请求封装：自动挂 Bearer、拆 {success,data}
 │   ├── backend-api.ts            # 服务端直连 Java（落地页专用）
+│   ├── gif-preview.ts            # Canvas2D 复刻服务端几何（与服务端同源公式）
 │   ├── qr-export.ts              # PNG/SVG/WebP 导出与剪贴板
 │   ├── qr-formatters.ts          # toQRCodeUTF8 / vCard 3.0
 │   ├── qr-templates.ts           # 行业美化模板
 │   └── pdf-helpers.ts
-└── types/                        # qr.ts（领域类型）/ admin.ts
+└── types/                        # qr.ts（领域类型）/ admin.ts / gif.ts
 
 backend/src/main/java/com/qrstudio/
 ├── QrStudioApplication.java      # 启动类 + 管理员种子化（CommandLineRunner）
 ├── common/                       # Result / JwtUtils / UserContext / FileValidator
 ├── config/                       # AuthInterceptor / WebConfig(CORS、/uploads 静态映射、BCrypt Bean)
 ├── controller/                   # Auth / DynamicQr / Order / Admin / PaymentConfig / Upload / System
+│                                 # GifExportController（/api/gif/**）
 ├── entity/                       # User / DynamicQr / ScanLog / Order / PricingConfig / PaymentConfig
+├── gif/                          # GIF 导出全套（GifOptions / FrameComposer / FfmpegCli …
+│                                 # 见 §5.6 渲染管线表）
 └── mapper/                       # 一一对应的 MyBatis-Plus Mapper
 ```
+
+后端 `src/main/resources/fonts/NotoSansSC-Bold.otf`（8.1MB）是 GIF 文字渲染的中文字体，**随 JAR 打包**，不要删。
 
 ---
 
@@ -202,6 +215,7 @@ pending ──用户点「我已完成支付」──> pending_review ──管�
 | `dynamic_qr.video` | 视频播放 | ¥8.00 / 条 | 30MB | 每 +5MB ¥1 | **按件** | 3 个月 |
 | `dynamic_qr`（兜底行） | 未细分时回退 | ¥2.00 | — | — | 一份 | 3 个月 |
 | `static_export` | 二维码图片导出（单张 / 批量 ZIP） | ¥2.00 | — | — | 一份 | **永久** |
+| `gif_export` | 二维码动图（GIF）导出 | ¥3.00 | — | — | 一份 | **永久** |
 
 > ⚠️ 音频沿用 `file` 类型（前端没有独立的音频 tab），两者共用 ¥6 档。
 > `dynamic_qr.wifi` 已在迁移 `2026-10-per-item-pricing-v2` 中删除，前端类型选择器只剩 7 种。
@@ -470,6 +484,150 @@ python .codebuddy/skills/ui-ux-pro-max/scripts/search.py "mobile viewport fixed 
 
 ---
 
+### 5.6 GIF 动图导出（`/gif`）
+
+把一张海报当背景、把用户自己的二维码「贴」上去，产出 4.68 秒的循环动图，图里自带「截图保存，扫一扫」。
+
+**验收标准只有一条**：这张 GIF 里的二维码必须真的扫得出来。所有参数默认值、回退顺序、两级校验，
+都是为了这一条服务的 —— 好看的动图扫不出码，等于没做。
+
+#### 为什么是同步返回，没有任务队列
+
+一次生成 = 117 帧 Java2D 合成 + 两遍 ffmpeg 编码 + 抽 5 帧解码复核，实测 **8.3 秒**。
+
+不引入队列：前端点「生成」后直接转圈等待，服务端 `Semaphore(2)` 限并发，
+`tryAcquire(200ms)` 抢不到槽位就返回 **429**。真要上队列，得连带做「任务表 + 轮询接口 + 产物有效期」，
+而这里是**一次性付费、单次产物**，用 8 秒等待换掉一整套异步设施是划算的。
+
+> `tryAcquire` 必须包 `try/catch (InterruptedException)`：恢复中断标记再抛 429。
+> 漏了它 `javac` 不会报错（受检异常在 lambda 里才报），但线程被中断时会静默吞掉信号。
+
+#### 渲染管线（`backend/src/main/java/com/qrstudio/gif/`）
+
+| 类 | 职责 |
+|---|---|
+| `GifOptions` | 参数的唯一来源；`normalize()` 负责夹取，`qrPixels()` / `haloPad()` / `haloFeather()` / `blurRadius()` / `framesHold()` 等派生值全从这里算 |
+| `ImageOps` | cover 裁切、bicubic 缩放、ARGB 拆合；`darkLumaIn()` 取指定区域的亮度 **10 分位** |
+| `FastBlur` | 三次 box blur 逼近高斯，滑动窗口 O(W·H)，耗时与半径无关 |
+| `QrAlphaExtractor` | 白底二维码 → 透明底：`alpha = 255 - min(r,g,b)`，再反预乘 `rgb = (rgb - 255(1-a))/a` |
+| `QrLayerComposer` | 衬底光晕（圆角 + 羽化）+ 二维码本体（整体 opacity + 四角压暗） |
+| `FontRegistry` | 单例加载 `classpath:/fonts/NotoSansSC-Bold.otf`（`volatile` + 双检锁），失败降级 `SANS_SERIF`；`canRenderChinese()` 供启动自检 |
+| `TextRenderer` | 倒计时（左下锚点 `lb`）与说明文字（底部居中锚点 `mb`），描边 + 投影一次成型 |
+| `FrameComposer` | 时间轴：A 倒计时 → B 淡入缩放 → C 常驻。构造时**预渲染 base 与 QR 层**，117 帧循环只做贴图 |
+| `FfmpegCli` | `palettegen` + `paletteuse` 两遍编码、抽尾帧、`version()` 探测 |
+| `QrScanVerifier` | ZXing 三档解码：原尺寸 / 640+模糊 / 480+模糊，每档 3 次尝试 |
+| `GifRenderService` | 渲染 → 编码 → 校验 → 落盘，返回 `Outcome`（帧数 / 体积 / 校验报告 / 耗时） |
+| `GifExportService` | 编排层：预检 / 订单校验 / 回退重试 / 核销 |
+| `GifStartupCheck` | `@Order(10)` 启动自检 ffmpeg 与字体，缺失只打 ERROR **不阻断启动** |
+| `GifCleanupTask` | 每天 04:30 清 `gif/*.gif`（7 天）与 `.gif-tmp/*`（1 小时）残留 |
+
+前端 `lib/gif-preview.ts` 用**同一套几何公式**在 Canvas2D 上重画一遍（`scaledMetrics()` 与服务端同源），
+`GifCanvasPreview` 用 `requestAnimationFrame` 按 25fps 循环播放 —— 参数改动、拖动二维码位置都即时可见，
+**不发任何请求**（预览免费且实时）。结果卡里必须写明「预览为近似效果，以最终产物为准」。
+
+#### 为什么不是 OpenCV
+
+brief 里给的方案是 OpenCV 的 `wechat_qrcode`，实际不可行：
+
+- `org.bytedeco:opencv` 的 native 包 **250MB**，且是 glibc 绑定，和 Alpine 镜像冲突（现在换成 jammy 也没必要为此付 250MB）；
+- `wechat_qrcode` 在 contrib 模块里，**官方 Maven 包没有预编译**，要自己编 C++。
+
+所以解码换成 **ZXing `core:3.5.3`**（约 500KB，纯 Java 零 native）。代价是召回率低一些 ——
+补偿手段是「`TRY_HARDER` + `ALSO_INVERTED` + **双 binarizer 兜底**」：
+
+> 只用 `HybridBinarizer`（局部阈值）时，二维码周围有一大片**纯白衬底**，局部块内全是白 → 估出来的阈值失真，
+> 整张图被判成不可解码。加 `GlobalHistogramBinarizer`（全局阈值）做第二路，问题消失。
+> 这个 bug 的表象极具误导性：渲染链路完全正常，`opacity=1 / corner=1 / blur=0` 时能过，
+> 一加 `blur=0.85` 就全挂 —— 看起来像模糊把码糊坏了，其实是二值化估错。
+
+#### ffmpeg 是运行时硬依赖
+
+两遍编码（先出全局调色板，再按调色板量化）比单遍质量高一个档次，Java 侧没有等价实现，只能调外部进程。
+
+- 抽帧用 **`-fps_mode passthrough`**。⚠️ `-vsync 0` 在 ffmpeg 7 已被移除，写了会**一帧都不出**，
+  校验静默判成「全部不可扫」—— 现象是「码明明很好扫，接口却说不行」。
+- 调色板两遍：`palettegen=stats_mode=full:max_colors=256` → `paletteuse=dither=none:diff_mode=rectangle`。
+  `dither=none` 是刻意的：抖动噪点会啃掉二维码的模块边缘。
+
+运行时镜像因此从 `17-jre-alpine` 换成 **`17-jre-jammy`** + `apt-get install --no-install-recommends ffmpeg fontconfig`，
+镜像 **+约 170MB**。
+
+> 为什么不能留在 Alpine 上装包：musl 下 AWT 直接报 `Fontconfig head is null`，一个字都画不出来，
+> 装了 `fontconfig` 也没用 —— 这不是缺包，是 Alpine 的 OpenJDK AWT 字体链本身残缺。
+
+#### 中文字体随 JAR 打包
+
+`backend/src/main/resources/fonts/NotoSansSC-Bold.otf`（8,543,168 bytes），`FontRegistry` 用
+`Font.createFont(Font.TRUETYPE_FONT, stream)` 从 classpath 读一次并持有，`TextRenderer` 通过
+`FontRegistry.at(size)` 取字号；缺失或解析失败时降级 `Font.SANS_SERIF` 并打 ERROR。
+
+> 字体文件本身已是 Bold 字重，`at()` 只 `deriveFont(size)`、**不再叠加 `Font.BOLD`** ——
+> 叠加会触发 JDK 的合成加粗，笔画糊成一团，小字号尤其明显。
+
+**绝不要依赖系统字体**：容器里通常只有 DejaVu（无中文），画出来是一排方框；
+而本地 Windows 开发机有微软雅黑，**完全看不出问题**，一上容器才炸。
+
+#### 默认参数是实测出来的，不是 brief 里的
+
+brief 的 0.42 / 0.30 是浅底素材上的结论。换到「白底 + 深色主体」的海报上三档全挂。
+用仓库根的 `content.jpg` + `qr.jpg` 扫参数网格后定下的默认值：
+
+| 参数 | 值 | 说明 |
+|---|---|---|
+| `qrOpacity` | **0.70** | 0.42 / 0.47 在白底海报上必挂 |
+| `cornerMult` | **0.85** | 低于 0.80 时定位图案在小尺寸下失守 |
+| `haloAlpha` | **自动**（`-1`） | 判据是**二维码底下那块区域的 10 分位亮度**，不是全图平均：`< 150` → 1.00，否则 0.95 |
+| `blur` | **自动**（随 `qrSize`） | 实测 0.85 档 |
+| `qrSize` | 378px（画布 800） | |
+
+两个反直觉的点，改参数前务必先看：
+
+1. **衬底不透明度要给满。** 0.95 和 0.90 都会挂 —— 半透明白衬底会把二维码的暗模块整体「提亮」，
+   深色海报上尤其明显。看着更"融合"的那个版本，扫码率是 0。
+2. **衬底羽化必须有溢出空间。** 必须在 `size + 4×feather` 的画布上画圆角矩形再模糊，最后裁回；
+   在同尺寸画布上模糊时边缘 alpha 恒为 1，**模糊等于没做**。
+   现象：像素探针里 x=210 是纯背景色（亮度 94），x=211 直接跳到 232 —— 一条刀切直线，没有过渡。
+
+#### 回退顺序：`cornerMult → qrOpacity → qrSize`
+
+不可扫就逐级抬参数，每级都**完整重渲染 + 重编码**（绝不拿内存里那帧去校验 —— GIF 的调色板量化会改变像素），
+`MAX_ATTEMPTS = 6` 防震荡。超体积则降画布（800 → 688 → 592 → 512，最多 3 次），
+`qrSize` / `haloPad` / `blur` 按比例联动缩放。
+
+> brief 里是先抬 `qrOpacity` 再动 `cornerMult`，**实测是错的**：白底海报上先抬 opacity 只会让码更糊进背景，
+> 真正卡住识别的是四个定位图案被压得太淡 —— 先恢复定位图案对比度才是最短路径。
+
+#### 两级校验：免费的一次、付费的一次
+
+| 接口 | 校验对象 | 门槛 |
+|---|---|---|
+| `POST /api/gif/precheck` | 只渲染**末帧**（单帧，秒级） | 免费、**可匿名**、不要订单 |
+| `POST /api/gif/generate` | 编码完成后从 **GIF 里抽末 5 帧**复核 | 需登录 + `paid` 订单 |
+
+预检失败返回 **422** + `suggestion`（前端给「一键应用建议值」），此时**一分钱没花**。
+生成失败同理：**订单保持 `paid` 不核销**，用户可改参数重试或申请退款 —— 这是付费产品的基本体面。
+
+> 预检**故意不要求登录**：它不落任何磁盘产物、单帧渲染约 0.2 秒，让还没注册的人先确认
+> 「我的素材能不能做出可扫的图」，是转化的前提。只有 `/generate` 才强制登录。
+> 也正因如此，两个接口的并发闸门分开：`generateSlots = 2`，`precheckSlots = 3`。
+> `generate` 用 `tryAcquire(200ms)` 抢不到就 429，`precheck` 用无参 `tryAcquire()` 立即失败 ——
+> 预检本来就是「先问问行不行」，让它排队反而更糟。
+
+#### 计费与幂等
+
+- 计费键 `gif_export`（¥3.00，`valid_months = 0` 无服务期，`per_item = 0` 一次性），
+  复用现有 `orders` 表，与 `static_export` 同语义：**买的是「导出这一次」**。
+- 只有「GIF 已落盘 **且** 三档校验全过」才把订单置 `used`、同时写 `orders.result_url`。
+- `result_url` 非空即幂等：同一 `orderId` 再调直接返回已有 URL，不重渲染、不重复扣费。
+- 产物落 `{uploadDir}/gif/{orderId}.gif`（管理员/免单时 `gif-{uuid}.gif`），
+  对外 URL `/uploads/gif/{orderId}.gif`，走现有 `/uploads/**` 静态映射，**不需要新路由**。
+  用订单 ID 命名而不是内容哈希：同一订单重复生成会覆盖同名文件，不会堆垃圾。
+- `GifCleanupTask`（每天 04:30）清两类垃圾：`{uploadDir}/.gif-tmp/*` 超过 **1 小时**（渲染中途被 kill 留下的帧序列，一次 30~60MB）、
+  `{uploadDir}/gif/*.gif` 超过 **7 天**。⚠️ 产物 7 天就没了，而订单 `result_url` 是永久的 ——
+  用户第 8 天回来点下载会 404，界面上要能兜住这个预期（目前是「文件保留 7 天」的文案提示）。
+
+---
+
 ## 6. API 一览
 
 所有响应统一为 `{ success: boolean, code: number, message: string, data: T }`（上传接口例外，见 §7）。
@@ -484,10 +642,12 @@ python .codebuddy/skills/ui-ux-pro-max/scripts/search.py "mobile viewport fixed 
 | GET | `/api/qr/dynamic/{shortCode}` | 公开 | 落地页取数，**副作用：写一条 scan_log** |
 | POST | `/api/upload` | 公开 | 多文件上传，见 §7 |
 | GET | `/api/payment/config` | 公开 | `{ payment, pricing, paymentQrs }`：收款提示 + 全量价目（含 `includedSizeMb` / `stepSizeMb` / `stepPrice` / `validMonths`）+ 各渠道收款码（按 `sortOrder`） |
-| POST | `/api/order/create` | 登录 | 建单，body `{ actionType, contentType, mediaUrls }`；`actionType` ∈ `dynamic_qr` / `static_export`，`contentType` 缺省时 `dynamic_qr` 直接 400（定不了价） |
+| POST | `/api/order/create` | 登录 | 建单，body `{ actionType, contentType, mediaUrls }`；`actionType` ∈ `dynamic_qr` / `static_export` / `gif_export`，`contentType` 缺省时 `dynamic_qr` 直接 400（定不了价） |
 | GET | `/api/order/status/{id}` | 本人/管理员 | 付费墙轮询用 |
 | POST | `/api/order/confirm` | 本人/管理员 | 提交「我已付款」→ `pending_review` |
 | POST | `/api/order/mock-pay` | 本人/管理员 | 开发环境免审 |
+| POST | `/api/gif/precheck` | **匿名** | GIF **预检**：只渲染末帧做三档解码，免费、不要订单、**不要求登录**；失败返回 `422 + suggestion` |
+| POST | `/api/gif/generate` | 登录 + `paid` 订单 | GIF **生成**：渲染→编码→抽末 5 帧复核→落盘核销；`orderId` 已出过图则幂等返回 |
 | GET | `/api/admin/users` | admin | 用户列表 |
 | POST | `/api/admin/users/{id}/toggle-status` | admin | 启用/禁用 |
 | POST | `/api/admin/users/{id}/role` | admin | 升降级 |
@@ -530,8 +690,8 @@ python .codebuddy/skills/ui-ux-pro-max/scripts/search.py "mobile viewport fixed 
 - `users` — `role` ∈ `user`/`admin`，`status` ∈ `active`/`disabled`
 - `dynamic_qrs` — `short_code` 唯一；`media_urls` / `style_config` 均存 **JSON 字符串**（`LONGTEXT`），取回后前端需 `JSON.parse`；`content_type` ∈ `url`/`text`/`vcard`/`image`/`video`/`pdf`/`file`（`wifi` 已于 v2 迁移下线）；`expires_at` 为服务到期时间（`valid_months` 换算而来，可空）；`show_brand_header` 1/0 控制落地页顶部品牌栏；`deleted_at` 非空即进回收站（落地页 404）
 - `scan_logs` — 每次落地页访问一条
-- `orders` — `status` ∈ `pending` / `pending_review` / `paid` / `used` / `expired`；`action_type` 存**实际命中的计费键**（如 `dynamic_qr.video`）
-- `pricing_configs` — 细分键 × 9 行（见 §5.3 价目表），体积阶梯字段 `included_size_mb` / `step_size_mb` / `step_price`，计价方式 `per_item`，服务期 `valid_months`，排序 `sort_order`
+- `orders` — `status` ∈ `pending` / `pending_review` / `paid` / `used` / `expired`；`action_type` 存**实际命中的计费键**（如 `dynamic_qr.video`）；`result_url` 仅供一次性导出类（`gif_export`）记录产物地址，**非空即幂等**，由 `SchemaMigrator.ensureColumn` 加上（`schema.sql` 里没有它）
+- `pricing_configs` — 细分键 × 10 行（见 §5.3 价目表），体积阶梯字段 `included_size_mb` / `step_size_mb` / `step_price`，计价方式 `per_item`，服务期 `valid_months`，排序 `sort_order`
 - `payment_configs` — 提示文案、付费墙总开关
 - `payment_qr_codes` — 多渠道收款码：`channel`（`wechat`/`alipay`）、`channel_name`、`image_url`、`enabled`、`sort_order`
 
@@ -615,6 +775,10 @@ spring:
 ## 9. 本地运行
 
 ```bash
+# 0) 前置：JDK 17 + Maven + MySQL 8 + Node 18+
+#    GIF 导出还需要 ffmpeg 在 PATH 里（Windows: winget install Gyan.FFmpeg，或从 gyan.dev 下 zip 解压加 PATH）
+#    没有 ffmpeg 不影响站点其它功能，只是 /gif 会 500，启动日志里有一条 ERROR
+
 # 1) 数据库：需要一个 MySQL 8，库名 qr_studio（JDBC 串带 createDatabaseIfNotExist=true）
 
 # 2) 后端（:8080，启动即建表 + 种子管理员）
@@ -624,6 +788,11 @@ cd backend && mvn spring-boot:run -Dspring-boot.run.profiles=dev
 # 3) 前端（:3001）
 cd frontend && npm install && npm run dev
 ```
+
+> GIF 渲染的真实素材端到端冒烟测试用仓库根的 `content.jpg`（海报）+ `qr.jpg`（二维码）：
+> `cd backend && mvn -Dtest=GifRenderSmokeTest test`。
+> 缺素材或本机没 ffmpeg 时测试会 **skip 而不是 fail**，CI 不会因环境问题红掉；
+> 跑完产物留在 `backend/target/gif-debug/`（`out.gif` + 末帧 PNG），失败时就看这两个文件。
 
 ### 配置分层（敏感值只在环境变量里）
 
@@ -653,7 +822,10 @@ docker compose up -d --build
 
 - 服务：`mysql:3306`（healthcheck）+ `backend:8080` + `frontend:3001`
 - 上传卷统一挂到 `./backend/data/uploads`，与本地开发路径一致（两套路径会丢文件）
-- `frontend/Dockerfile` 三阶段 standalone；`backend/Dockerfile` maven → jre-alpine，**不执行 `apk add`**（国内云连 Alpine 源易超时）
+- `frontend/Dockerfile` 三阶段 standalone；`backend/Dockerfile` maven → **`17-jre-jammy` + apt 装 ffmpeg/fontconfig**（GIF 导出用，见 §5.6）。
+  原来是不装任何包的 `17-jre-alpine`，**换底座的原因是 Alpine 上 AWT 画不出中文**，不是嫌 apk 慢。
+  `apt` 源通过 `ARG APT_MIRROR`（默认阿里云）改写，国内构建不至于卡在 `archive.ubuntu.com`；
+  该 arg 已接到 `docker-compose.yml` 的 `backend.build.args`。
 
 > ⚠️ 若后端启动后监听的**不是 8080**，先查环境变量：Spring 的宽松绑定会把 `SERVER__PORT` / `SERVER_PORT` 也当成 `server.port`。某些 IDE / Agent 沙箱会注入这类变量，命令行参数 `--server.port=8080` 优先级最高，可强制覆盖。
 
@@ -665,7 +837,11 @@ docker compose up -d --build
 |---|---|
 | 端到端联调（tasks 5.5） | ✅ 已完成。四个脚本共 **69 项断言**全绿（详见 §10.1），另有后端 14 个单元测试 |
 | CI | ✅ `.github/workflows/ci.yml`：后端打包 + 前端类型检查/构建 + 真实 MySQL 的端到端联调 |
-| 单元测试 / 组件测试 | ⚠️ 后端已有 14 个（`TokenBucketRateLimiterTest` 5 + `AuthInterceptorTest` 9，`mvn test` 全绿）；业务 Controller、前端 Jest/Playwright 仍为空白 |
+| 单元测试 / 组件测试 | ⚠️ 后端已有 **24 个**（`TokenBucketRateLimiterTest` 5 + `AuthInterceptorTest` 9 + `GifOptionsTest` 6 + `QrAlphaExtractorTest` 3 + `GifRenderSmokeTest` 1，另有 1 个调参工具 `GifParamProbeTest` 常驻 `@Disabled`），`mvn test` 全绿（25 run / 1 skipped）；业务 Controller、前端 Jest/Playwright 仍为空白 |
+| GIF 导出测试覆盖 | ⚠️ 只有「默认参数端到端跑通」+ 参数夹取 / 白底反推单测。`tasks.md` 8.4~8.8（回退重试、订单幂等、失败不核销、帧一致性）**无自动化**，改回退逻辑必须人工验证 |
+| GIF 真机扫码 | ⚠️ `tasks.md` 8.10 未做：成品只在 ZXing 三档下验证通过，**没有用微信扫过真机** |
+| GIF 并发上限 | ⚠️ `Semaphore(2)` 是进程内常量。多实例部署时实际并发 = 实例数 × 2，而 ffmpeg 是 CPU 密集型，上量前按机器核数重定 |
+| GIF 产物 7 天过期 | ⚠️ 订单里的 `result_url` 永久有效，文件 7 天后被 `GifCleanupTask` 清掉 → 老用户点下载 404。付费产品上属于体验债，见 §5.6 |
 | UI 交互自动化 | ❌ 未覆盖。付费弹窗、二维码渲染与导出、批量生成/解码、PDF Canvas、Admin 面板点击需人工验证 |
 | Docker 镜像构建 | ✅ 已纳入 CI，但默认不跑，需在 Actions 里手动触发 `workflow_dispatch` |
 | 登录爆破防护 | ⚠️ `/api/auth/login` 仍无限流（上传已加），建议复用 `TokenBucketRateLimiter` 按 IP 限速 |

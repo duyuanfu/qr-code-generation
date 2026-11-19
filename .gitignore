@@ -10,10 +10,13 @@ coverage
 .next/
 out/
 *.tsbuildinfo
+# 本地自定义构建目录（NEXT_DIST_DIR 验证用），不入库
+.next-*/
 
 # Java / Maven build output
 backend/target/
 *.class
+backend/cp.txt
 
 # Production data & uploads
 data/

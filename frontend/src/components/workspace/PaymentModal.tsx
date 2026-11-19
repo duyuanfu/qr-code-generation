@@ -21,13 +21,25 @@ import type { MediaItem } from '@/types/qr';
 interface PaymentModalProps {
   isOpen: boolean;
   onClose: () => void;
-  actionType: 'dynamic_qr' | 'static_export';
+  actionType: 'dynamic_qr' | 'static_export' | 'gif_export';
   /** 二维码内容类型：决定命中哪一条定价（按类型分别配置） */
   contentType?: string;
   /** 本次要托管的媒体文件，服务端按真实体积计算阶梯价 */
   mediaUrls?: MediaItem[];
   onSuccess: (orderId: string) => void;
 }
+
+/** 各计费项的标题与副文案；dynamic_qr 的标题还要拼类型与件数，单独处理 */
+const COPY: Record<string, { title: string; desc: string }> = {
+  static_export: {
+    title: '购买二维码图片导出',
+    desc: '支付后可导出真实内容的高清二维码 PNG（单张下载 / 打印 / 批量 ZIP）',
+  },
+  gif_export: {
+    title: '购买二维码动图（GIF）导出',
+    desc: '支付后生成一段循环动图，可直接发布到闲鱼、朋友圈等平台',
+  },
+};
 
 function formatMb(bytes: number): string {
   return (bytes / 1024 / 1024).toFixed(1);
@@ -259,12 +271,12 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           <h3 className="text-lg font-bold text-slate-900">
             {actionType === 'dynamic_qr'
               ? `开通${typeLabel ? `「${typeLabel}」` : '多媒体'}动态活码${perItem && itemCount > 1 ? `（${itemCount} ${unitName}）` : ''}`
-              : '购买二维码图片导出'}
+              : COPY[actionType]?.title ?? '购买导出服务'}
           </h3>
           <p className="mt-1 text-xs text-slate-500">
             {actionType === 'dynamic_qr'
               ? '支付后自动生成活码，扫码即可查看内容'
-              : '支付后可导出真实内容的高清二维码 PNG（单张下载 / 打印 / 批量 ZIP）'}
+              : COPY[actionType]?.desc ?? ''}
           </p>
         </div>
 
@@ -337,9 +349,11 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                 <div className="mt-1.5 flex items-center justify-between border-t border-slate-200/70 pt-1.5">
                   <span className="flex items-center gap-1 text-slate-500">
                     <CalendarClock className="h-3 w-3" aria-hidden="true" />
-                    服务有效期
+                    {actionType === 'gif_export' ? '文件保留' : '服务有效期'}
                   </span>
-                  <span className="font-medium text-emerald-600">永久有效（内容不存服务器）</span>
+                  <span className="font-medium text-emerald-600">
+                    {actionType === 'gif_export' ? '7 天，请及时下载保存' : '永久有效（内容不存服务器）'}
+                  </span>
                 </div>
               )}
             </div>

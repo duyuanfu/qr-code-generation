@@ -29,6 +29,7 @@ public class SchemaMigrator implements ApplicationRunner {
 
     private static final String PRICING_V1 = "2026-10-pricing-tiers-v1";
     private static final String PRICING_V2 = "2026-10-per-item-pricing-v2";
+    private static final String GIF_V3 = "2026-11-gif-export-v3";
 
     private final JdbcTemplate jdbcTemplate;
 
@@ -49,6 +50,8 @@ public class SchemaMigrator implements ApplicationRunner {
             // 默认值 1 / NULL 正好对应「存量活码继续展示品牌栏、且都还在正常列表里」。
             ensureColumn("dynamic_qrs", "show_brand_header", "TINYINT NOT NULL DEFAULT 1");
             ensureColumn("dynamic_qrs", "deleted_at", "DATETIME NULL");
+            // GIF 导出的一次性产物地址：同一笔订单重复请求靠它返回同一个文件
+            ensureColumn("orders", "result_url", "VARCHAR(255) NULL");
 
             // 2. 业务数据：按体积阶梯的价目表与 3 个月有效期（只执行一次）
             if (markApplied(PRICING_V1)) {
@@ -61,6 +64,12 @@ public class SchemaMigrator implements ApplicationRunner {
             if (markApplied(PRICING_V2)) {
                 applyPerItemPricing();
                 log.info("已应用 {} 按件计价迁移", PRICING_V2);
+            }
+
+            // 4. 动图（GIF）导出计费项
+            if (markApplied(GIF_V3)) {
+                applyGifExportPricing();
+                log.info("已应用 {} 动图导出计费迁移", GIF_V3);
             }
         } catch (Exception e) {
             // 迁移失败不应该阻止服务启动，但要留下明确日志
@@ -179,6 +188,24 @@ public class SchemaMigrator implements ApplicationRunner {
                 "扫码支付后点【我已完成支付】，管理员核销后自动放行。动态活码为 3 个月服务期，到期请自行续费；"
                         + "静态二维码内容不存服务器，永久有效。仅可发布合规合法信息，"
                         + "因客户自身内容违规导致二维码无法使用的，由客户自行负责。");
+    }
+
+    /**
+     * 动图（GIF）导出的计费项。
+     *
+     * <p>价格交给 {@code INSERT IGNORE}：老库里如果管理员已经手工建过这一行，
+     * 重启不能把他的定价刷回 3 元。但「无服务期」「不按件累加」是这一计费项的
+     * 业务定义（产物是文件，一次生成一份），不随管理员的定价调整而改变。
+     */
+    private void applyGifExportPricing() {
+        jdbcTemplate.update(
+                "INSERT IGNORE INTO pricing_configs (id, item_key, item_name, price, enabled) "
+                        + "VALUES (?, ?, ?, ?, 1)",
+                "price-gif-export", "gif_export", "二维码动图（GIF）导出", new java.math.BigDecimal("3.00"));
+
+        jdbcTemplate.update(
+                "UPDATE pricing_configs SET valid_months = 0, per_item = 0, included_size_mb = 0, "
+                        + "step_size_mb = 0, step_price = 0, sort_order = 950 WHERE item_key = 'gif_export'");
     }
 
     /** 付费弹窗的默认提示语：补充 3 个月有效期与合规免责声明 */

@@ -1,4 +1,4 @@
-package com.qrstudio.gif;
+package com.qrstudio.common;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -6,20 +6,23 @@ import java.awt.*;
 import java.io.InputStream;
 
 /**
- * 中文字体注册。
+ * 随 JAR 打包的中文字体。
  *
- * <p>字体随 JAR 打包而不是依赖宿主机：服务器上既没有 Windows 的微软雅黑，
- * 装 {@code fonts-noto-cjk} 又要多 100MB 镜像，而且渲染结果会随发行版字体版本漂移。
- * 打进来之后，本地调试与线上产出的图逐像素一致。
+ * <p>字体不依赖宿主机：服务器上既没有 Windows 的微软雅黑，装 {@code fonts-noto-cjk}
+ * 又要多 100MB 镜像，而且渲染结果会随发行版字体版本漂移。打进来之后，
+ * 本地调试与线上产出的图逐像素一致。
+ *
+ * <p>GIF 导出（倒计时、说明文字）与条形码导出（人眼可读数字、商品名备注）共用这一份。
+ * 只加载一次，避免 8.5MB 字体在内存里存两份。
  */
 @Slf4j
-public final class FontRegistry {
+public final class BundledFonts {
 
     private static final String RESOURCE = "/fonts/NotoSansSC-Bold.otf";
 
     private static volatile Font base;
 
-    private FontRegistry() {
+    private BundledFonts() {
     }
 
     /** 基础字体（已是 Bold 字重），加载失败时降级到逻辑字体 */
@@ -28,7 +31,7 @@ public final class FontRegistry {
         if (f != null) {
             return f;
         }
-        synchronized (FontRegistry.class) {
+        synchronized (BundledFonts.class) {
             if (base != null) {
                 return base;
             }
@@ -38,7 +41,7 @@ public final class FontRegistry {
     }
 
     private static Font load() {
-        try (InputStream in = FontRegistry.class.getResourceAsStream(RESOURCE)) {
+        try (InputStream in = BundledFonts.class.getResourceAsStream(RESOURCE)) {
             if (in == null) {
                 log.error("中文字体缺失：classpath:{}，将降级到系统逻辑字体，中文可能显示为方块", RESOURCE);
                 return new Font(Font.SANS_SERIF, Font.BOLD, 12);

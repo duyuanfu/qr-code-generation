@@ -9,7 +9,7 @@
 
 ## 1. 项目定位
 
-QR Studio 是一个二维码 SaaS 工作台，两条业务线：
+QR Studio 是一个二维码 SaaS 工作台，四条业务线：
 
 1. **静态二维码**（URL / 文本 / vCard 名片）
    - 100% 浏览器算力，`qr-code-styling` 在前端直接生成，**不产生任何后端请求**，永久有效、不限扫码。
@@ -19,8 +19,12 @@ QR Studio 是一个二维码 SaaS 工作台，两条业务线：
    - 元数据落 MySQL，文件落磁盘卷，扫码落地页由 Next.js 服务端渲染直出。
 3. **GIF 动图导出**（`/gif`）
    - 把用户自己的二维码贴到一张海报上，产出一张 4.68 秒的循环动图，供「截图保存后扫一扫」。
-   - **唯一有服务端图像渲染的业务线**：Java2D 合成 117 帧 + ffmpeg 两遍编码，见 §5.6。
+   - **唯一需要 ffmpeg 的业务线**：Java2D 合成 117 帧 + ffmpeg 两遍编码，见 §5.6。
    - 一次性计费（`gif_export`），与静态码导出同语义：买的是「导出这一次」，产物无服务期。
+4. **商品条形码标签导出**（`/barcode`）
+   - 一维码（EAN-13 / EAN-8 / UPC-A / Code 128 / Code 39），按**毫米 + DPI** 出一张能直接打印的标签（PNG + SVG）。
+   - 与第 1 条并列的**例外**：静态码是纯前端算力，条形码**必须走后端** —— 前端没有一维码 writer，且物理尺寸必须落在整数模块像素上，见 §5.7。
+   - 一次性计费（`barcode_export` ¥2），不提供配色/圆角/Logo，因为激光枪按边沿间距判条宽。
 
 在此之上叠了一层**订阅收费墙 + 管理后台**：普通用户生成活码 / 无水印导出需付费，管理员免单。
 
@@ -64,7 +68,9 @@ qr-code-generation/
 | 鉴权 | JJWT 0.12 + BCrypt | 双通道取 token：`Authorization: Bearer` 或 Cookie `token` |
 | 二维码 | `qr-code-styling` | ⚠️ 中文数据**必须**过 `toQRCodeUTF8()`，否则扫码必乱码 |
 | 二维码解码 | 前端 `@zxing/library`；后端 `com.google.zxing:core` 3.5.3 | ⚠️ **不引入 OpenCV**，理由见 §5.6「为什么不是 OpenCV」 |
+| 一维码编码 | 后端 `core:3.5.3` 的 `MultiFormatWriter` + Java2D | ⚠️ 前端 `@zxing/library` **没有 1D writer**，所以 `/barcode` 走后端，见 §5.7 |
 | 动图渲染 | Java2D（`BufferedImage`）+ ffmpeg 7 | ⚠️ ffmpeg 是**运行时硬依赖**，镜像必须用 `17-jre-jammy`，见 §5.6 |
+| 中文字体 | `com.qrstudio.common.BundledFonts` 读 `classpath:/fonts/NotoSansSC-Bold.otf` | GIF 与条形码共用一份，**已被上提出 `gif` 包**，见 §5.6 |
 | 文件存储 | 本地磁盘卷 + SHA-256 命名 | 见 §8 上传管道 |
 | PDF | Canvas 矢量直绘 | ⚠️ 移动端**严禁**直接用 `iframe` 打开 PDF（微信/安卓白屏或强下载） |
 
@@ -78,6 +84,8 @@ frontend/src/
 │   ├── page.tsx                  # 主工作台（单张 / 批量生成 / 批量解码 三 tab）
 │   ├── layout.tsx                # 全局布局 + ClientAuthWrapper
 │   ├── admin/page.tsx            # 管理后台（五 tab，非管理员踢回首页）
+│   ├── gif/page.tsx              # GIF 动图导出（独立页）
+│   ├── barcode/page.tsx          # 商品条形码标签导出（独立页）
 │   └── q/[shortId]/page.tsx      # 扫码落地页（Server Component，SSR 直出）
 ├── components/
 │   ├── admin/                    # UsersPanel / PricingPanel / PaymentConfigPanel / OrdersPanel / ExpiryPanel
@@ -85,6 +93,7 @@ frontend/src/
 │   ├── landing/                  # LandingHeader / MobilePdfCanvasViewer / MobileImageViewer / MobileVideoPlayer / MobileFileList / MediaViewer / PdfViewerModal / ShareButton
 │   ├── qr/QRCodeCanvas.tsx       # 封装 qr-code-styling
 │   ├── gif/                      # GifWorkbench / GifCanvasPreview / GifParamPanel
+│   ├── barcode/                  # BarcodeWorkbench / BarcodeForm / BarcodePreview
 │   ├── ui/                       # button / input / card / badge / tabs / label
 │   └── workspace/                # Header / ContentForm / StyleConfigPanel / DualPreview
 │                                 # PaymentModal / BatchGenerator / BatchDecoder …
@@ -92,25 +101,31 @@ frontend/src/
 │   ├── api-client.ts             # 浏览器侧统一请求封装：自动挂 Bearer、拆 {success,data}
 │   ├── backend-api.ts            # 服务端直连 Java（落地页专用）
 │   ├── gif-preview.ts            # Canvas2D 复刻服务端几何（与服务端同源公式）
+│   ├── barcode-format.ts         # 条形码前端预校验（位数/字符集/校验位，规则与服务端逐条对齐）
 │   ├── qr-export.ts              # PNG/SVG/WebP 导出与剪贴板
 │   ├── qr-formatters.ts          # toQRCodeUTF8 / vCard 3.0
 │   ├── qr-templates.ts           # 行业美化模板
 │   └── pdf-helpers.ts
-└── types/                        # qr.ts（领域类型）/ admin.ts / gif.ts
+└── types/                        # qr.ts（领域类型）/ admin.ts / gif.ts / barcode.ts
 
 backend/src/main/java/com/qrstudio/
 ├── QrStudioApplication.java      # 启动类 + 管理员种子化（CommandLineRunner）
 ├── common/                       # Result / JwtUtils / UserContext / FileValidator
+│                                 # BundledFonts（中文字体单例，GIF 与条形码共用）
 ├── config/                       # AuthInterceptor / WebConfig(CORS、/uploads 静态映射、BCrypt Bean)
+│                                 # SchemaMigrator（启动期 ALTER + 一次性数据迁移）
 ├── controller/                   # Auth / DynamicQr / Order / Admin / PaymentConfig / Upload / System
 │                                 # GifExportController（/api/gif/**）
+│                                 # BarcodeController（/api/barcode/**）
 ├── entity/                       # User / DynamicQr / ScanLog / Order / PricingConfig / PaymentConfig
 ├── gif/                          # GIF 导出全套（GifOptions / FrameComposer / FfmpegCli …
 │                                 # 见 §5.6 渲染管线表）
+├── barcode/                      # 条形码导出全套（BarcodeOptions / BarcodeMetrics / BarcodeVerifier …
+│                                 # 见 §5.7 模块表）
 └── mapper/                       # 一一对应的 MyBatis-Plus Mapper
 ```
 
-后端 `src/main/resources/fonts/NotoSansSC-Bold.otf`（8.1MB）是 GIF 文字渲染的中文字体，**随 JAR 打包**，不要删。
+后端 `src/main/resources/fonts/NotoSansSC-Bold.otf`（8.1MB）是 GIF 与条形码共用的中文字体，**随 JAR 打包**，不要删。
 
 ---
 
@@ -216,10 +231,12 @@ pending ──用户点「我已完成支付」──> pending_review ──管�
 | `dynamic_qr`（兜底行） | 未细分时回退 | ¥2.00 | — | — | 一份 | 3 个月 |
 | `static_export` | 二维码图片导出（单张 / 批量 ZIP） | ¥2.00 | — | — | 一份 | **永久** |
 | `gif_export` | 二维码动图（GIF）导出 | ¥3.00 | — | — | 一份 | **永久** |
+| `barcode_export` | 商品条形码标签导出（PNG + SVG） | ¥2.00 | — | — | 一份 | **永久** |
 
 > ⚠️ 音频沿用 `file` 类型（前端没有独立的音频 tab），两者共用 ¥6 档。
 > `dynamic_qr.wifi` 已在迁移 `2026-10-per-item-pricing-v2` 中删除，前端类型选择器只剩 7 种。
 > `note`：本表与 `SchemaMigrator` 里 `PRICING_V1` / `PRICING_V2` 迁移的种子行必须一致；改价走 admin 面板，**不要再回来改种子**（迁移用 `app_migrations` 抢占，改种子对已跑过的库无效）。
+> 后加的两个一次性导出项各自挂在独立迁移上：`gif_export` 在 GIF 那版迁移里，`barcode_export` 在 `2026-11-barcode-label-v4`（`INSERT IGNORE` + `UPDATE ... valid_months=0, per_item=0, sort_order=960`，不覆盖后台改过的价）。
 
 > 🚨 **schema.sql 只能引用建表语句里本来就有的列**。它由 Spring 在上下文启动早期执行，而新增列是 `SchemaMigrator` 之后才 `ALTER` 上去的；一旦种子 INSERT 里写了迁移才加的列（例如 `per_item`），**老库升级时会直接 `Unknown column` 起不来**。新列取值一律交给迁移写入。
 
@@ -511,7 +528,7 @@ python .codebuddy/skills/ui-ux-pro-max/scripts/search.py "mobile viewport fixed 
 | `FastBlur` | 三次 box blur 逼近高斯，滑动窗口 O(W·H)，耗时与半径无关 |
 | `QrAlphaExtractor` | 白底二维码 → 透明底：`alpha = 255 - min(r,g,b)`，再反预乘 `rgb = (rgb - 255(1-a))/a` |
 | `QrLayerComposer` | 衬底光晕（圆角 + 羽化）+ 二维码本体（整体 opacity + 四角压暗） |
-| `FontRegistry` | 单例加载 `classpath:/fonts/NotoSansSC-Bold.otf`（`volatile` + 双检锁），失败降级 `SANS_SERIF`；`canRenderChinese()` 供启动自检 |
+| `BundledFonts`（在 `common/`，不在本包） | 单例加载 `classpath:/fonts/NotoSansSC-Bold.otf`（`volatile` + 双检锁），失败降级 `SANS_SERIF`；`canRenderChinese()` 供启动自检 |
 | `TextRenderer` | 倒计时（左下锚点 `lb`）与说明文字（底部居中锚点 `mb`），描边 + 投影一次成型 |
 | `FrameComposer` | 时间轴：A 倒计时 → B 淡入缩放 → C 常驻。构造时**预渲染 base 与 QR 层**，117 帧循环只做贴图 |
 | `FfmpegCli` | `palettegen` + `paletteuse` 两遍编码、抽尾帧、`version()` 探测 |
@@ -557,9 +574,13 @@ brief 里给的方案是 OpenCV 的 `wechat_qrcode`，实际不可行：
 
 #### 中文字体随 JAR 打包
 
-`backend/src/main/resources/fonts/NotoSansSC-Bold.otf`（8,543,168 bytes），`FontRegistry` 用
+`backend/src/main/resources/fonts/NotoSansSC-Bold.otf`（8,543,168 bytes），`com.qrstudio.common.BundledFonts` 用
 `Font.createFont(Font.TRUETYPE_FONT, stream)` 从 classpath 读一次并持有，`TextRenderer` 通过
-`FontRegistry.at(size)` 取字号；缺失或解析失败时降级 `Font.SANS_SERIF` 并打 ERROR。
+`BundledFonts.at(size)` 取字号；缺失或解析失败时降级 `Font.SANS_SERIF` 并打 ERROR。
+
+> 这个类原来叫 `gif.FontRegistry`，做条形码时**上提到了 `common`** —— 一维码下方的 HRI 数字也要中文字体
+> （`caption` 是中文的），两个业务线各持一个 8MB 字体的单例毫无意义。
+> 签名没变，`gif` 侧只改了 import 与类名；`GifStartupCheck` 的字体自检也指向新类。
 
 > 字体文件本身已是 Bold 字重，`at()` 只 `deriveFont(size)`、**不再叠加 `Font.BOLD`** ——
 > 叠加会触发 JDK 的合成加粗，笔画糊成一团，小字号尤其明显。
@@ -628,6 +649,160 @@ brief 的 0.42 / 0.30 是浅底素材上的结论。换到「白底 + 深色主�
 
 ---
 
+### 5.7 商品条形码标签导出（`/barcode`）
+
+一维码（EAN-13 / EAN-8 / UPC-A / Code 128 / Code 39），输入是「码制 + 内容 + 毫米尺寸 + DPI」，
+输出一张能直接打印的标签：PNG（按 DPI 光栅化）+ SVG（矢量，交印刷店）。
+
+**验收标准同样只有一条**：这标签能被**激光扫码枪**读出来。所以这里和二维码那套「好看」的价值观完全相反 ——
+纯黑白、无 alpha、不改颜色、不叠 Logo、不加圆角，因为激光枪是靠**边沿之间的间距比例**判宽度的。
+
+#### 为什么这条链路必须走后端（与 §5.4「静态码纯前端」的例外关系）
+
+三条理由，任一条都足以否掉前端方案：
+
+1. **前端压根没有一维码 writer。** `@zxing/library@0.21.3` 只带二维码 writer，
+   `BrowserMultiFormatReader` 是读的。要前端做，得引一个第三方 1D 库，且它多半也是「先画再缩」。
+2. **物理尺寸必须落在整数模块像素上。** 一维码的 X 尺寸 = `modulePx × 25.4 / dpi`（mm），
+   而 `modulePx` 只能是整数。浏览器 canvas 一旦按 `labelWidthMm → px` 缩放绘制，条宽就带上半像素，
+   相邻条出现 3px / 4px / 3px 这种不等比例 —— **激光枪按最窄那条判宽度，直接判废，而人眼看不出区别**。
+   所以流程固定为：`availPx = round(W/25.4*dpi)` → `modulePx = floor(availPx/totalModules)` → 反算 `xMm` 与 `magnification`。
+   标签上实际印出来的宽度是 `modulePx × totalModules`（往往比用户填的窄一点），**这一点在 UI 上必须如实显示**。
+3. **付费墙要干净。** 后端不生成 = 不存在那批像素，不需要「画个演示码」的把戏。
+
+> 与第 1 条业务线的关系：静态二维码是「内容就是用户自己输的字符串」，前端画了也藏不住（§5.4 已承认这点）。
+> 条形码的内容同样是用户自己的商品码，**但它多了「必须精确到像素」这个物理约束**，
+> 这条约束没法在前端满足 —— 这才是它走后端的真实原因，不是防白嫖。
+
+#### 标准模块数（含两侧静区）
+
+| 码制 | 符号模块 | 静区/侧 | 合计 | X 基准 | 倍率区间 |
+|---|---|---|---|---|---|
+| EAN-13 | 95 | 11 | **117** | 0.330mm | 80%~200% |
+| EAN-8 | 67 | 7 | **81** | 0.330mm | 80%~200% |
+| UPC-A | 95 | 9 | **113** | 0.330mm | 80%~200% |
+| Code 128 | 由内容定 | 10 | 量出来的 | 0.250mm | 50%~200% |
+| Code 39 | 由内容定 | 10 | 量出来的 | 0.250mm | 50%~200% |
+
+Code 128/39 的宽度随字符数变化，`BarcodeEncoder.measure()` 先写一个 1px 模块的矩阵量出总宽，
+再据此算 `modulePx`。**不能预设常量**，否则长内容会溢出标签。
+
+#### 模块表（`backend/src/main/java/com/qrstudio/barcode/`）
+
+| 类 | 职责 |
+|---|---|
+| `BarcodeSymbology` | 枚举，携带 `label / format / quietModules / nominalXMm / 倍率区间 / 位数`；`parse()` 宽容（`EAN-13` / `ean13` / `EAN_13` 都认），不认识的 400 并列出可选项 |
+| `ChecksumUtil` | GS1 mod-10：从右往左权重 3、1 交替；EAN-13 / EAN-8 / UPC-A 共用 |
+| `BarcodeOptions` | 入参 DTO + `normalize()`。越界**一律拒绝**不是夹取：宽 15~200mm、高 10~150mm、DPI ∈ {203,300,600}、≤4000 万像素；`caption` 超 40 码点静默截断（截断无害，拒绝太粗暴） |
+| `BarcodeContent` | 内容规范化，返回 `Prepared(text, checksumAppended)` |
+| `BarcodeSpec` | `normalize()` 的产物，已校验的可信参数（后续步骤不再重复校验） |
+| `BarcodeMetrics` | 尺寸推导 + 区间校验 + 非阻断 `warnings`；`asMap()` 是给前端的契约 |
+| `BarcodeLayout` | 条高分配：上留 8%，文字区 16%（带 `caption` 22%），否则下留 8% |
+| `BarcodeEncoder` | `measure()` / `write()`，包装 `MultiFormatWriter` |
+| `BarcodeRenderer` | `renderLabel()` / `renderPreview()` / `toPng()`；`TYPE_INT_RGB`、游程合并画条 |
+| `BarcodeSvgWriter` | `BitMatrix` → SVG：根节点 `mm`、`viewBox` 用模块坐标、连续黑模块合 `<rect>` |
+| `BarcodeVerifier` | 两档解码自检，返回 `Report(nativeOk, degradedOk, …)` |
+| `BarcodeExportService` | 编排：预览 / 导出 / 订单解析 / 核销 / 幂等 / `Semaphore(4)` |
+| `BarcodeCleanupTask` | 每天 **04:31** 清 7 天前的 `barcode/*`（与 GIF 的 04:30 错开，日志好读） |
+
+#### `EncodeHintType.MARGIN` 在一维码里是「两侧合计」
+
+这是最容易踩的一条：二维码的 `MARGIN` 语义是**每侧**模块数，一维码是**两侧合计**。
+
+```java
+hints.put(EncodeHintType.MARGIN, symbology.quietModules() * 2);  // EAN-13 → 22
+```
+
+写成 `11` 的话总宽会变成 `95 + 11 = 106` 而不是 117，静区每侧只有 5.5 模块 —— 扫得出来，
+但不符合 GS1 要求，廉价激光枪在浅色标签上就开始漏读。测试里 `measure()` 恒为 117 就是守这条。
+
+#### 校验位：只补不猜，绝不静默改内容
+
+- 用户填 12 位 → 自动算第 13 位并补上（`checksumAppended = true`，UI 上标出来）。
+- 用户填 13 位 → 逐位校验，错了一律 400，且**把正确内容直接告诉他**：
+
+  > 校验位不正确：按前 12 位计算，末位应为 2，你填的是 3。正确内容：6901234567892
+  > （也可以只填前 12 位，系统自动补校验位）
+
+- **不强制 EAN-13 以 69 开头**：20~29 是合法的店内码（生鲜称重、自制品），强制 69 会让一半零售用户用不了。
+- 空格与连字符直接吃掉（`690 1234 567892` 是常见手抄形态）；其它字符 400。
+
+#### 尺寸越界时给的是「真正可行的区间」
+
+用户填 20mm 宽打 EAN-13，报错不能只说「太窄」。`tooTightMessage()` 先算出该 DPI 下**真正合法的整数模块像素区间**
+（`ceil(总模块 × 0.8)` ~ `floor(总模块 × 2.0)`），再换算成毫米：
+
+> 标签宽度不足以容纳 EAN-13：每模块需落在 4~5 像素（相当于标签宽度 39.6~79.1mm），当前 20mm。
+
+直接拿「倍率 × 标称 X」换算会给出自己也不合法的建议值（比如 34.9mm），用户照着改还是错。
+
+#### 两档自检：`DEGRADE_SCALE = 0.7`（不是设计稿里的 50%）
+
+| 档 | 做法 | 目的 |
+|---|---|---|
+| native | 原图直接解 | 结构对不对 |
+| degraded | 缩到 **70%** + 3×3 均值模糊后再解 | 模拟「打印 + 纸面扩散 + 枪头离得远一点」 |
+
+`TRY_HARDER` 开了，binarizer 也是 `HybridBinarizer` + `GlobalHistogramBinarizer` 双路兜底（同 §5.6 的理由）。
+
+> **0.5 会把完全能用的标签误判成废品。** 调参探针（`BarcodeDegradeProbeTest`，常驻 `@Disabled`）实测：
+> 3px 模块的 `CODE_39 / AB-123` 在 0.5 / 0.55 / 0.6 / 0.65 全挂，0.7 才过；
+> 而 2px 模块的长 Code 128 在 0.7 下仍然挂 —— 正好做到「放过 3px、拦住 2px」。
+> 阈值是量出来的，不是拍的；改它之前先跑一遍探针。
+
+#### 预览也跑一遍真实分辨率的自检（设计稿里没有这一步）
+
+原设计是「预览 = 1px/模块的免费图，付费后才自检」。测试里发现这条路会让用户**付完钱才收到 422** ——
+虽然不扣费，但体感是「花钱买了个错误」。
+
+现在的 `preview()` 做两件事：
+
+1. 出 1px/模块的预览图（`previewModulePx = 1`，`data:image/png;base64,…`，不落盘）；
+2. **另按真实分辨率渲染一份**跑同样的两档自检，把 `readable` / `verify` / `reason` 一起返回（那张图不返回给前端）。
+
+前端据此禁用导出按钮，并显示「这组参数未通过扫码自检，暂不可导出」。
+
+> 顺带解决了付费墙：117px 宽的图印在 40mm 上只有 74dpi，打出来必然糊 —— 预览天然不可用，
+> **不需要水印**（水印压条等于故意做废码，用户会以为产品坏了）。
+
+#### 输出：PNG 无 alpha，SVG 游程合并
+
+- PNG 用 `TYPE_INT_RGB`（**没有 alpha 通道**）。带透明的 PNG 在某些打印链路里会被合成到灰底上，
+  白底变浅灰、对比度掉一档。测试 `renderedImageIsOpaqueRgbWithPureWhiteQuietZone` 守这条。
+- HRI 数字用 `Monospaced`，字号约条高 18%，超宽时**先缩字号再截断**（截数字比截条码安全）。
+- SVG 根节点 `width="40mm" height="25mm"` + `viewBox` 用模块坐标，条用 `<rect>` 游程合并 ——
+  EAN-13 的 117 个模块合并后只剩 30 来个矩形（`svgMergesRunsInsteadOfOneRectPerModule` 断言 `< totalModules/2`）。
+  逐模块输出会让 SVG 大一倍且无意义。
+
+#### 计费、幂等、落盘
+
+- 计费键 `barcode_export`（**¥2.00**，`valid_months = 0`、`per_item = 0`，一次性），复用 `orders` 表与 `result_url`。
+- `result_url` 非空即幂等：同一 `orderId` 再调直接返回上次那两份文件（`cached: true`），不重渲、不重复扣费。
+- 只有「PNG + SVG 都写盘成功 **且** 自检全过」才置 `used` 并写 `result_url`；自检不过抛 422，**订单保持 `paid`**。
+- 落 `{uploadDir}/barcode/{orderId}.png|.svg`（免单/未付费墙时 `barcode-{uuid}`），对外 `/uploads/barcode/…`，走现有静态映射。
+- `Semaphore(4)` + `tryAcquire(300ms)` → 429。比 GIF 轻两个数量级（毫秒级），但**仍要限**：
+  200×150mm@600dpi 是 1600 万像素，4 并发就是 250MB 堆。
+
+#### 与 GIF 最大的差别：**没有回退重试**
+
+GIF 是「扫不出来就抬参数再试」，因为那是美术参数，抬一点用户看不出来。
+条形码反过来 —— 条宽比例由标准锁死，**参数不对就是不对**，自动改用户的标签尺寸会打出贴不上的东西。
+所以策略是「算不出来就明确拒绝 + 给出正确区间」，一次到位。
+
+#### 前端为什么没有「实时画」的预览
+
+`GifCanvasPreview` 能在本地重画是因为几何公式同源；条形码不行 —— 前端拿不到 `modulePx` 只能靠服务端算，
+而预览图本来就必须是服务端出的那份 1px/模块矩阵。
+所以 `BarcodeWorkbench` 是 **400ms debounce 调 `/api/barcode/preview`**，不是本地绘制。
+用 `seqRef` 记请求序号：先发的慢请求后到会被直接丢弃，否则预览会被旧参数的结果覆盖。
+
+#### 明确不做的事
+
+不做配色、圆角、Logo、渐变、批量生成、A4 拼版。产品决策（见 `openspec/changes/add-barcode-label-export/design.md`）：
+「能打印的标签即可，不用加各种样式修改，能用就行」。这些选项加上去只会诱导用户做出读不出的码。
+
+---
+
 ## 6. API 一览
 
 所有响应统一为 `{ success: boolean, code: number, message: string, data: T }`（上传接口例外，见 §7）。
@@ -642,12 +817,14 @@ brief 的 0.42 / 0.30 是浅底素材上的结论。换到「白底 + 深色主�
 | GET | `/api/qr/dynamic/{shortCode}` | 公开 | 落地页取数，**副作用：写一条 scan_log** |
 | POST | `/api/upload` | 公开 | 多文件上传，见 §7 |
 | GET | `/api/payment/config` | 公开 | `{ payment, pricing, paymentQrs }`：收款提示 + 全量价目（含 `includedSizeMb` / `stepSizeMb` / `stepPrice` / `validMonths`）+ 各渠道收款码（按 `sortOrder`） |
-| POST | `/api/order/create` | 登录 | 建单，body `{ actionType, contentType, mediaUrls }`；`actionType` ∈ `dynamic_qr` / `static_export` / `gif_export`，`contentType` 缺省时 `dynamic_qr` 直接 400（定不了价） |
+| POST | `/api/order/create` | 登录 | 建单，body `{ actionType, contentType, mediaUrls }`；`actionType` ∈ `dynamic_qr` / `static_export` / `gif_export` / `barcode_export`，`contentType` 缺省时 `dynamic_qr` 直接 400（定不了价） |
 | GET | `/api/order/status/{id}` | 本人/管理员 | 付费墙轮询用 |
 | POST | `/api/order/confirm` | 本人/管理员 | 提交「我已付款」→ `pending_review` |
 | POST | `/api/order/mock-pay` | 本人/管理员 | 开发环境免审 |
 | POST | `/api/gif/precheck` | **匿名** | GIF **预检**：只渲染末帧做三档解码，免费、不要订单、**不要求登录**；失败返回 `422 + suggestion` |
 | POST | `/api/gif/generate` | 登录 + `paid` 订单 | GIF **生成**：渲染→编码→抽末 5 帧复核→落盘核销；`orderId` 已出过图则幂等返回 |
+| POST | `/api/barcode/preview` | **匿名** | 条形码**预览**：1px/模块的 base64 PNG，**不落盘**；同时按真实分辨率跑两档自检，返回 `readable` / `verify` / `reason` |
+| POST | `/api/barcode/export` | 登录 + `paid` 订单 | 条形码**导出**：编码→自检→落 PNG+SVG→核销；`orderId` 已出过图则幂等返回。自检不过 422 且**不核销** |
 | GET | `/api/admin/users` | admin | 用户列表 |
 | POST | `/api/admin/users/{id}/toggle-status` | admin | 启用/禁用 |
 | POST | `/api/admin/users/{id}/role` | admin | 升降级 |
@@ -690,8 +867,8 @@ brief 的 0.42 / 0.30 是浅底素材上的结论。换到「白底 + 深色主�
 - `users` — `role` ∈ `user`/`admin`，`status` ∈ `active`/`disabled`
 - `dynamic_qrs` — `short_code` 唯一；`media_urls` / `style_config` 均存 **JSON 字符串**（`LONGTEXT`），取回后前端需 `JSON.parse`；`content_type` ∈ `url`/`text`/`vcard`/`image`/`video`/`pdf`/`file`（`wifi` 已于 v2 迁移下线）；`expires_at` 为服务到期时间（`valid_months` 换算而来，可空）；`show_brand_header` 1/0 控制落地页顶部品牌栏；`deleted_at` 非空即进回收站（落地页 404）
 - `scan_logs` — 每次落地页访问一条
-- `orders` — `status` ∈ `pending` / `pending_review` / `paid` / `used` / `expired`；`action_type` 存**实际命中的计费键**（如 `dynamic_qr.video`）；`result_url` 仅供一次性导出类（`gif_export`）记录产物地址，**非空即幂等**，由 `SchemaMigrator.ensureColumn` 加上（`schema.sql` 里没有它）
-- `pricing_configs` — 细分键 × 10 行（见 §5.3 价目表），体积阶梯字段 `included_size_mb` / `step_size_mb` / `step_price`，计价方式 `per_item`，服务期 `valid_months`，排序 `sort_order`
+- `orders` — `status` ∈ `pending` / `pending_review` / `paid` / `used` / `expired`；`action_type` 存**实际命中的计费键**（如 `dynamic_qr.video`）；`result_url` 供一次性导出类（`gif_export` / `barcode_export`）记录产物地址，**非空即幂等**，由 `SchemaMigrator.ensureColumn` 加上（`schema.sql` 里没有它）。条形码落的是 PNG 的 URL，SVG 与它同目录同基名
+- `pricing_configs` — 细分键 × 11 行（见 §5.3 价目表），体积阶梯字段 `included_size_mb` / `step_size_mb` / `step_price`，计价方式 `per_item`，服务期 `valid_months`，排序 `sort_order`
 - `payment_configs` — 提示文案、付费墙总开关
 - `payment_qr_codes` — 多渠道收款码：`channel`（`wechat`/`alipay`）、`channel_name`、`image_url`、`enabled`、`sort_order`
 
@@ -837,11 +1014,15 @@ docker compose up -d --build
 |---|---|
 | 端到端联调（tasks 5.5） | ✅ 已完成。四个脚本共 **69 项断言**全绿（详见 §10.1），另有后端 14 个单元测试 |
 | CI | ✅ `.github/workflows/ci.yml`：后端打包 + 前端类型检查/构建 + 真实 MySQL 的端到端联调 |
-| 单元测试 / 组件测试 | ⚠️ 后端已有 **24 个**（`TokenBucketRateLimiterTest` 5 + `AuthInterceptorTest` 9 + `GifOptionsTest` 6 + `QrAlphaExtractorTest` 3 + `GifRenderSmokeTest` 1，另有 1 个调参工具 `GifParamProbeTest` 常驻 `@Disabled`），`mvn test` 全绿（25 run / 1 skipped）；业务 Controller、前端 Jest/Playwright 仍为空白 |
+| 单元测试 / 组件测试 | ⚠️ 后端已有 **61 个**（条形码 37：`ChecksumUtilTest` 4 + `BarcodeContentTest` 13 + `BarcodeMetricsTest` 9 + `BarcodeRenderTest` 6 + `BarcodeExportServiceTest` 5；GIF 与通用 24：`TokenBucketRateLimiterTest` 5 + `AuthInterceptorTest` 9 + `GifOptionsTest` 6 + `QrAlphaExtractorTest` 3 + `GifRenderSmokeTest` 1，另有 `GifParamProbeTest` / `BarcodeDegradeProbeTest` 两个调参探针常驻 `@Disabled`），`mvn test` 全绿（63 run / 3 skipped）；业务 Controller、前端 Jest/Playwright 仍为空白 |
 | GIF 导出测试覆盖 | ⚠️ 只有「默认参数端到端跑通」+ 参数夹取 / 白底反推单测。`tasks.md` 8.4~8.8（回退重试、订单幂等、失败不核销、帧一致性）**无自动化**，改回退逻辑必须人工验证 |
 | GIF 真机扫码 | ⚠️ `tasks.md` 8.10 未做：成品只在 ZXing 三档下验证通过，**没有用微信扫过真机** |
 | GIF 并发上限 | ⚠️ `Semaphore(2)` 是进程内常量。多实例部署时实际并发 = 实例数 × 2，而 ffmpeg 是 CPU 密集型，上量前按机器核数重定 |
 | GIF 产物 7 天过期 | ⚠️ 订单里的 `result_url` 永久有效，文件 7 天后被 `GifCleanupTask` 清掉 → 老用户点下载 404。付费产品上属于体验债，见 §5.6 |
+| 条形码真机扫码 | ⚠️ `tasks.md` 7.7 / 7.8 未做：PNG 与 SVG 只在 ZXing 两档下验证通过，**没有用激光扫码枪与手机相机实际扫过**。这是本功能唯一的验收口径，上线前必须补 |
+| 条形码产物 7 天过期 | ⚠️ 同 GIF：`result_url` 永久但 `BarcodeCleanupTask` 7 天后清文件。标签是「打印完就完事」的产物，重导一份比翻旧文件快，但仍需在 UI 上写明（结果卡已有「文件保留 7 天」） |
+| 条形码并发上限 | ⚠️ `Semaphore(4)` 也是进程内常量，多实例时实际并发 = 实例数 × 4。约束来自堆（1600 万像素 × 4 ≈ 250MB），加实例前先确认内存 |
+| 条形码批量 / A4 拼版 | ❌ 明确不做（产品决策）。若将来要加，**别在前端拼图** —— 每张标签都必须按自己的 `modulePx` 单独渲染，拼版只能拼已经渲染好的整数像素位图 |
 | UI 交互自动化 | ❌ 未覆盖。付费弹窗、二维码渲染与导出、批量生成/解码、PDF Canvas、Admin 面板点击需人工验证 |
 | Docker 镜像构建 | ✅ 已纳入 CI，但默认不跑，需在 Actions 里手动触发 `workflow_dispatch` |
 | 登录爆破防护 | ⚠️ `/api/auth/login` 仍无限流（上传已加），建议复用 `TokenBucketRateLimiter` 按 IP 限速 |

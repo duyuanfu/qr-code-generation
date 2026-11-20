@@ -21,7 +21,7 @@ import type { MediaItem } from '@/types/qr';
 interface PaymentModalProps {
   isOpen: boolean;
   onClose: () => void;
-  actionType: 'dynamic_qr' | 'static_export' | 'gif_export';
+  actionType: 'dynamic_qr' | 'static_export' | 'gif_export' | 'barcode_export';
   /** 二维码内容类型：决定命中哪一条定价（按类型分别配置） */
   contentType?: string;
   /** 本次要托管的媒体文件，服务端按真实体积计算阶梯价 */
@@ -39,7 +39,14 @@ const COPY: Record<string, { title: string; desc: string }> = {
     title: '购买二维码动图（GIF）导出',
     desc: '支付后生成一段循环动图，可直接发布到闲鱼、朋友圈等平台',
   },
+  barcode_export: {
+    title: '购买商品条形码标签',
+    desc: '支付后导出可打印的 PNG（按所选 DPI）与矢量 SVG，扫码枪可直接读取',
+  },
 };
+
+/** 产物是文件（有 7 天保留期）的计费项，付费弹窗里的有效期文案与活码不同 */
+const FILE_PRODUCTS = new Set(['gif_export', 'barcode_export']);
 
 function formatMb(bytes: number): string {
   return (bytes / 1024 / 1024).toFixed(1);
@@ -349,10 +356,10 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                 <div className="mt-1.5 flex items-center justify-between border-t border-slate-200/70 pt-1.5">
                   <span className="flex items-center gap-1 text-slate-500">
                     <CalendarClock className="h-3 w-3" aria-hidden="true" />
-                    {actionType === 'gif_export' ? '文件保留' : '服务有效期'}
+                    {FILE_PRODUCTS.has(actionType) ? '文件保留' : '服务有效期'}
                   </span>
                   <span className="font-medium text-emerald-600">
-                    {actionType === 'gif_export' ? '7 天，请及时下载保存' : '永久有效（内容不存服务器）'}
+                    {FILE_PRODUCTS.has(actionType) ? '7 天，请及时下载保存' : '永久有效（内容不存服务器）'}
                   </span>
                 </div>
               )}

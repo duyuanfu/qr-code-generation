@@ -1,5 +1,6 @@
 package com.qrstudio.gif;
 
+import com.qrstudio.common.BundledFonts;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -40,8 +41,8 @@ public class GifStartupCheck implements ApplicationRunner {
             log.info("GIF 导出就绪：{}", version);
         }
 
-        Font font = FontRegistry.base();
-        if (FontRegistry.canRenderChinese()) {
+        Font font = BundledFonts.base();
+        if (BundledFonts.canRenderChinese()) {
             log.info("中文字体就绪：{} / {}", font.getFontName(), font.getFamily());
         } else {
             log.error("中文字体不可用：{} 缺失或缺少中文字形，生成的 GIF 上文字会显示为方块",

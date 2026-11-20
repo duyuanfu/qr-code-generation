@@ -1,5 +1,7 @@
 package com.qrstudio.gif;
 
+import com.qrstudio.common.BundledFonts;
+
 import java.awt.*;
 import java.awt.font.GlyphVector;
 import java.awt.geom.Rectangle2D;
@@ -40,7 +42,7 @@ public final class TextRenderer {
      */
     public static Layer render(String text, float size, float strokeWidth,
                                Color fill, Color stroke, double shadow) {
-        Font font = FontRegistry.at(size);
+        Font font = BundledFonts.at(size);
 
         BufferedImage probe = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
         Graphics2D pg = probe.createGraphics();

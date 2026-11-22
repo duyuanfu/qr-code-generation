@@ -73,7 +73,7 @@
 | 后端 | Java 17, Spring Boot 3.2, MyBatis-Plus, JJWT, BCrypt |
 | 数据库 | MySQL 8（utf8mb4） |
 | 二维码引擎 | `qr-code-styling`（定制 UTF-8 字节流编码）, `@zxing/library` |
-| 服务端动图渲染 | Java2D（AWT）+ **ffmpeg 7**（两遍调色板编码）, ZXing `core` 3.5.3（扫码验证） |
+| 服务端动图渲染 | Java2D（AWT）+ **ffmpeg 4.4+**（两遍调色板编码，抽帧参数按版本自适应）, ZXing `core` 3.5.3（扫码验证） |
 | 文件存储 | 本地磁盘卷 + SHA-256 内容哈希去重，支持 HTTP 206 分片播放 |
 | 部署 | 服务级多阶段 Dockerfile + Docker Compose（mysql + backend + frontend） |
 
@@ -84,11 +84,13 @@
 
 ## 🚀 本地开发运行
 
-需要 **JDK 17 + Maven + MySQL 8 + Node.js 18+**，以及 **ffmpeg**（GIF 动图导出用，需在 `PATH` 里）。
+需要 **JDK 17 + Maven + MySQL 8 + Node.js 18+**，以及 **ffmpeg 4.4 或更新**（GIF 动图导出用，需在 `PATH` 里）。
 
 ```bash
 # 0. ffmpeg：GIF 导出依赖运行时调用它做两遍调色板编码
 #    Windows: winget install Gyan.FFmpeg   |  macOS: brew install ffmpeg   |  Debian/Ubuntu: apt install ffmpeg
+#    版本要求 4.4+（Ubuntu 22.04 自带的 4.4.2 就可以）：抽帧用的帧同步开关会按版本自动选
+#    （-vsync 0 / -fps_mode passthrough），装老版本也不用改配置
 #    没有它不影响其它功能：启动日志里会有一条 ERROR，/gif 点生成会立刻返回可读的 503
 #    （不会让你先付钱、等几秒、再报一个看不懂的错）
 #    自检地址：GET /api/system/gif-encoder
@@ -244,6 +246,9 @@ server {
 - **生成失败不扣费**：订单只在「GIF 已落盘且三档校验全过」时才核销，报错后可以直接重试。
 - 服务端没装 ffmpeg 时，点生成会**立刻**返回 503 并说明原因（可访问 `GET /api/system/gif-encoder` 自检），
   而不是先付款、再等几秒、最后收到一个看不懂的错误。
+- 若自检里 `available: true` 但生成报「无法抽出校验帧」，说明 ffmpeg 版本与抽帧参数不匹配；
+  接口返回的 `frameSync` 字段会显示当前选中的写法（`-vsync 0` / `-fps_mode passthrough`），
+  正常情况下它会按版本自动选对，不需要人工干预。
 - 单次生成较吃 CPU，服务端限流同时只跑 2 个，繁忙时会返回「稍后再试」。
 
 ---

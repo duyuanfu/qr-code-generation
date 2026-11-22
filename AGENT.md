@@ -64,7 +64,7 @@ qr-code-generation/
 | 鉴权 | JJWT 0.12 + BCrypt | 双通道取 token：`Authorization: Bearer` 或 Cookie `token` |
 | 二维码 | `qr-code-styling` | ⚠️ 中文数据**必须**过 `toQRCodeUTF8()`，否则扫码必乱码 |
 | 二维码解码 | 前端 `@zxing/library`；后端 `com.google.zxing:core` 3.5.3 | ⚠️ **不引入 OpenCV**，理由见 §5.6「为什么不是 OpenCV」 |
-| 动图渲染 | Java2D（`BufferedImage`）+ ffmpeg 7 | ⚠️ ffmpeg 是**运行时硬依赖**，镜像必须用 `17-jre-jammy`，见 §5.6 |
+| 动图渲染 | Java2D（`BufferedImage`）+ ffmpeg **4.4+**（抽帧开关按版本自动选，见 §5.6） | ⚠️ ffmpeg 是**运行时硬依赖**，镜像必须用 `17-jre-jammy`，见 §5.6 |
 | 中文字体 | `com.qrstudio.common.BundledFonts` 读 `classpath:/fonts/NotoSansSC-Bold.otf` | GIF 文字渲染用，**位于 `common` 包**（不再属于 `gif`），见 §5.6 |
 | 文件存储 | 本地磁盘卷 + SHA-256 命名 | 见 §8 上传管道 |
 | PDF | Canvas 矢量直绘 | ⚠️ 移动端**严禁**直接用 `iframe` 打开 PDF（微信/安卓白屏或强下载） |
@@ -564,10 +564,30 @@ brief 里给的方案是 OpenCV 的 `wechat_qrcode`，实际不可行：
 
 两遍编码（先出全局调色板，再按调色板量化）比单遍质量高一个档次，Java 侧没有等价实现，只能调外部进程。
 
-- 抽帧用 **`-fps_mode passthrough`**。⚠️ `-vsync 0` 在 ffmpeg 7 已被移除，写了会**一帧都不出**，
-  校验静默判成「全部不可扫」—— 现象是「码明明很好扫，接口却说不行」。
+- 抽帧的帧同步开关**按 ffmpeg 版本自动选**，见下。这是全链路唯一与版本强耦合的地方。
 - 调色板两遍：`palettegen=stats_mode=full:max_colors=256` → `paletteuse=dither=none:diff_mode=rectangle`。
   `dither=none` 是刻意的：抖动噪点会啃掉二维码的模块边缘。
+
+#### 帧同步开关：`-vsync 0` vs `-fps_mode passthrough`
+
+同一个开关名字换了两次，**选错就是「等几秒然后 500」**：
+
+| ffmpeg | 写法 | 说明 |
+|---|---|---|
+| ≤ 5.0 | `-vsync 0` | 只有旧名。Ubuntu 22.04 自带 4.4.2 属于这一档 |
+| 5.1 ~ 6.x | 两者都认 | 5.1 起 `-fps_mode passthrough` 取代 `-vsync` |
+| ≥ 7.0 | `-fps_mode passthrough` | `-vsync` 已被删除 |
+
+`FfmpegCli.syncArgsFor(versionLine)` 按版本号猜，猜错（滚动版、发行版后向移植）时
+`extract()` 从错误文案里认出 `Unrecognized option` 就翻成另一种重跑一次并把结果缓存。
+
+⚠️ 这个坑的**表象极度误导**：没有 ffmpeg 时会 503（`requireEncoder` 挡住了），
+有 ffmpeg 但选项不认时，渲染与编码全部成功，只在抽帧这一步「一帧都不出」→ 复核拿到空列表
+→ 判定「全部不可扫」→ 用户被告知「请调整二维码参数」，调什么都不会好。
+所以 `extractTailFrames` 现在**一帧都抽不出来时直接抛异常**，由 `GifRenderService`
+翻译成 503「服务器无法抽出校验帧」，而不是伪装成可扫性失败再白重渲 6 轮。
+
+排查入口：`GET /api/system/gif-encoder` 里的 `frameSync` 字段就是当前选中的写法。
 
 运行时镜像因此从 `17-jre-alpine` 换成 **`17-jre-jammy`** + `apt-get install --no-install-recommends ffmpeg fontconfig`，
 镜像 **+约 170MB**。
@@ -876,7 +896,7 @@ docker compose up -d --build
 |---|---|
 | 端到端联调（tasks 5.5） | ✅ 已完成。四个脚本共 **69 项断言**全绿（详见 §10.1），另有后端 14 个单元测试 |
 | CI | ✅ `.github/workflows/ci.yml`：后端打包 + 前端类型检查/构建 + 真实 MySQL 的端到端联调 |
-| 单元测试 / 组件测试 | ⚠️ 后端已有 **27 个**（`TokenBucketRateLimiterTest` 5 + `AuthInterceptorTest` 9 + `GifEncoderGuardTest` 2 + `GifOptionsTest` 6 + `QrAlphaExtractorTest` 3 + `GifRenderSmokeTest` 1，另有 `GifParamProbeTest` 调参探针常驻 `@Disabled`），`mvn test` 全绿（27 run / 1 skipped）；业务 Controller、前端 Jest/Playwright 仍为空白 |
+| 单元测试 / 组件测试 | ⚠️ 后端已有 **33 个**（`TokenBucketRateLimiterTest` 5 + `AuthInterceptorTest` 9 + `FfmpegCliSyncTest` 6 + `GifEncoderGuardTest` 2 + `GifOptionsTest` 6 + `QrAlphaExtractorTest` 3 + `GifRenderSmokeTest` 1，另有 `GifParamProbeTest` 调参探针常驻 `@Disabled`），`mvn test` 全绿（33 run / 1 skipped）；业务 Controller、前端 Jest/Playwright 仍为空白 |
 | GIF 导出测试覆盖 | ⚠️ 只有「默认参数端到端跑通」+ 参数夹取 / 白底反推 / 编码器前置检查。`tasks.md` 8.4~8.8（回退重试、订单幂等、失败不核销、帧一致性）**无自动化**，改回退逻辑必须人工验证。素材自 `GifTestImages` 现场合成，不再依赖仓库里的示例图 |
 | GIF 真机扫码 | ⚠️ `tasks.md` 8.10 未做：成品只在 ZXing 三档下验证通过，**没有用微信扫过真机** |
 | GIF 并发上限 | ⚠️ `Semaphore(2)` 是进程内常量。多实例部署时实际并发 = 实例数 × 2，而 ffmpeg 是 CPU 密集型，上量前按机器核数重定 |

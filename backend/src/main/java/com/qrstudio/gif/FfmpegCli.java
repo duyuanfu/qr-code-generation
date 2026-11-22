@@ -32,6 +32,10 @@ public class FfmpegCli {
     /** 调色板与编码超时；800×800/117 帧实测各 1~2s，给足余量 */
     private static final long TIMEOUT_SECONDS = 90;
 
+    /** 帧同步的两种写法，见 {@link #syncArgsFor(String)} */
+    private static final List<String> FPS_MODE_ARGS = List.of("-fps_mode", "passthrough");
+    private static final List<String> VSYNC_ARGS = List.of("-vsync", "0");
+
     /** 测试与本地脚本用：跳过 Spring 注入直接指定可执行文件 */
     void setFfmpegPath(String path) {
         this.ffmpegPath = path;
@@ -40,6 +44,11 @@ public class FfmpegCli {
     /** 当前配置的可执行文件名/路径，用于诊断接口回显 */
     public String configuredPath() {
         return ffmpegPath;
+    }
+
+    /** 诊断接口用：当前选中的帧同步写法（`-vsync 0` 或 `-fps_mode passthrough`） */
+    public String frameSyncOption() {
+        return version() == null ? null : String.join(" ", syncArgs());
     }
 
     /**
@@ -117,43 +126,135 @@ public class FfmpegCli {
     }
 
     /**
+     * 抽帧时的帧同步参数。
+     *
+     * <p>同一个开关在三个大版本里换了三次名字：5.1 之前只有 {@code -vsync 0}，
+     * 5.1 起改名 {@code -fps_mode passthrough}，7.0 把 {@code -vsync} 删掉了。
+     * 传错名字 ffmpeg 会报 {@code Unrecognized option} 且**一帧都不输出**，
+     * 校验于是把正常成品判成「全部不可扫」—— 线上表现就是「等几秒，然后 500」。
+     *
+     * <p>先按版本号猜，猜错时按 {@link #extract} 的错误文案再翻一次并缓存。
+     * 光看版本号不够：发行版的后向移植、以及 {@code N-109742-gxxxx} 这类滚动版
+     * 都不跟版本号严格对应。
+     */
+    static List<String> syncArgsFor(String versionLine) {
+        int[] v = parseVersion(versionLine);
+        // 6.x 起一定有 -fps_mode；5.0 还没有（5.1 才引入），4.x 及更早只有 -vsync
+        if (v[0] >= 6 || (v[0] == 5 && v[1] >= 1)) {
+            return FPS_MODE_ARGS;
+        }
+        return VSYNC_ARGS;
+    }
+
+    /** 解析 "ffmpeg version 4.4.2-0ubuntu0.22.04.1" 里的 `4.4`；认不出返回 {0,0} */
+    static int[] parseVersion(String versionLine) {
+        if (versionLine == null) {
+            return new int[]{0, 0};
+        }
+        int at = versionLine.indexOf("version");
+        String rest = at >= 0 ? versionLine.substring(at + 7).trim() : versionLine.trim();
+        int end = 0;
+        while (end < rest.length() && (Character.isDigit(rest.charAt(end)) || rest.charAt(end) == '.')) {
+            end++;
+        }
+        String[] parts = rest.substring(0, end).split("\\.");
+        try {
+            int major = parts.length > 0 && !parts[0].isEmpty() ? Integer.parseInt(parts[0]) : 0;
+            int minor = parts.length > 1 ? Integer.parseInt(parts[1]) : 0;
+            return new int[]{major, minor};
+        } catch (NumberFormatException e) {
+            return new int[]{0, 0};
+        }
+    }
+
+    /** 已确认可用的帧同步写法，首次抽帧时确定并缓存（翻转只在猜错时发生一次） */
+    private volatile List<String> syncArgs;
+
+    private List<String> syncArgs() {
+        List<String> cached = syncArgs;
+        if (cached != null) {
+            return cached;
+        }
+        return syncArgsFor(version());
+    }
+
+    /** 测试用：固定帧同步写法，模拟「版本号猜错」的情况 */
+    void setSyncArgsForTest(List<String> args) {
+        this.syncArgs = args;
+    }
+
+    /**
      * 从成品 GIF 抽出末若干帧。
      *
      * <p>必须从 GIF 抽，不能拿内存里的 BufferedImage 校验：256 色量化与
      * diff 帧复用都发生在编码阶段，量化后的画质才是用户实际拿到的东西。
      *
      * @return 抽出的 PNG 文件，按帧序排列
+     * @throws IOException 一帧都没抽出来（编码器参数不被支持、GIF 损坏等）
      */
     public List<Path> extractTailFrames(Path gif, int totalFrames, int count, Path outDir) throws IOException {
         Files.createDirectories(outDir);
         int from = Math.max(0, totalFrames - count);
 
-        // select 的表达式里逗号是参数分隔符，必须转义；ProcessBuilder 不过 shell，不能靠引号。
-        // -fps_mode passthrough 不能用旧的 -vsync 0：ffmpeg 7 起已移除 -vsync，
-        // 传了会直接认不出选项、一帧都不输出（这个坑让校验静默判成「全部不可扫」）。
+        // select 的表达式里逗号是参数分隔符，必须转义；ProcessBuilder 不过 shell，不能靠引号
         String filter = "select=gte(n\\," + from + ")";
 
-        Result r = run(List.of(
-                ffmpegPath, "-y", "-hide_banner", "-loglevel", "error",
-                "-i", gif.toString(),
-                "-vf", filter,
-                "-fps_mode", "passthrough",
-                outDir.resolve("c%03d.png").toString()));
-
+        Result r = extract(gif, filter, outDir.resolve("c%03d.png"));
         List<Path> files = listPngs(outDir);
-        if (!r.ok() || files.isEmpty()) {
-            // 退路：整段抽一遍再取尾部。慢一点，但不会因为 select 语法差异全军覆没
-            log.warn("按帧号抽帧失败，回退到全量抽取: {}", r.tail());
-            Files.createDirectories(outDir);
-            run(List.of(ffmpegPath, "-y", "-hide_banner", "-loglevel", "error",
-                    "-i", gif.toString(), "-fps_mode", "passthrough",
-                    outDir.resolve("a%04d.png").toString()));
-            files = listPngs(outDir);
-            if (files.size() > count) {
-                files = new ArrayList<>(files.subList(files.size() - count, files.size()));
-            }
+        if (r.ok() && !files.isEmpty()) {
+            return files;
+        }
+
+        // 退路：整段抽一遍再取尾部。慢一点，但不会因为 select 语法差异全军覆没
+        log.warn("按帧号抽帧失败，回退到全量抽取: {}", r.tail());
+        Result all = extract(gif, null, outDir.resolve("a%04d.png"));
+        files = listPngs(outDir);
+        if (files.isEmpty()) {
+            // 一帧都抽不出来不是「参数扫不出」，是服务端能力问题；必须抛出去而不是
+            // 返回空列表 —— 否则上层会把成品判成不可扫，白白重渲 6 轮再报 422。
+            throw new IOException("ffmpeg 未能从成品 GIF 抽出任何帧: " + all.tail());
+        }
+        if (files.size() > count) {
+            files = new ArrayList<>(files.subList(files.size() - count, files.size()));
         }
         return files;
+    }
+
+    /** 抽帧命令；帧同步参数不被识别时翻成另一种写法重跑一次 */
+    private Result extract(Path gif, String selectFilter, Path outPattern) {
+        List<String> used = syncArgs();
+        Result r = runExtract(gif, selectFilter, outPattern, used);
+        if (r.ok() || !mentionsUnknownOption(r.output(), used.get(0))) {
+            return r;
+        }
+        List<String> alt = FPS_MODE_ARGS.equals(used) ? VSYNC_ARGS : FPS_MODE_ARGS;
+        log.warn("当前 ffmpeg 不认识 {}，改用 {} 重试", used.get(0), alt.get(0));
+        syncArgs = alt;
+        return runExtract(gif, selectFilter, outPattern, alt);
+    }
+
+    private Result runExtract(Path gif, String selectFilter, Path outPattern, List<String> sync) {
+        List<String> cmd = new ArrayList<>(List.of(
+                ffmpegPath, "-y", "-hide_banner", "-loglevel", "error",
+                "-i", gif.toString()));
+        if (selectFilter != null) {
+            cmd.add("-vf");
+            cmd.add(selectFilter);
+        }
+        cmd.addAll(sync);
+        cmd.add(outPattern.toString());
+        return run(cmd);
+    }
+
+    /** ffmpeg 报「不认识这个选项」；不同版本的措辞不同，按几种已知写法匹配 */
+    static boolean mentionsUnknownOption(String output, String option) {
+        if (output == null) {
+            return false;
+        }
+        return output.contains("Unrecognized option")
+                || output.contains("Option not found")
+                || output.contains("not found: option")
+                || output.contains("Option '" + option + "' not found");
     }
 
     private List<Path> listPngs(Path dir) throws IOException {

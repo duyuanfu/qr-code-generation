@@ -61,6 +61,8 @@ public class SystemController {
         res.put("available", version != null);
         res.put("version", version);
         res.put("path", ffmpeg.configuredPath());
+        // 帧同步开关按版本自动选（5.1 改名 -fps_mode，7.0 删掉 -vsync），回显出来方便排查
+        res.put("frameSync", ffmpeg.frameSyncOption());
         res.put("hint", version != null
                 ? "GIF 生成环境正常"
                 : "找不到 ffmpeg：容器内需安装（Docker 镜像已内置），或配置 app.gif.ffmpeg 指向可执行文件");

@@ -134,7 +134,16 @@ public class GifRenderService {
 
     private QrScanVerifier.Report verifyEncodedGif(Path gif, int total, Path workDir) throws IOException {
         Path checkDir = workDir.resolve("check");
-        List<Path> tails = ffmpeg.extractTailFrames(gif, total, 5, checkDir);
+        List<Path> tails;
+        try {
+            tails = ffmpeg.extractTailFrames(gif, total, 5, checkDir);
+        } catch (IOException e) {
+            // 抽不出帧是服务端 ffmpeg 的问题（选项不被支持 / 编码器异常），不是用户的参数
+            // 扫不出来。若不在这里区分，上层会把成品判成「不可扫」并重渲 6 轮，最后还告诉
+            // 用户「请调整参数」—— 调什么都不会好。
+            throw new GifException(503, "生成失败：服务器上的 ffmpeg 无法抽出校验帧（" + e.getMessage()
+                    + "）。本次未扣费，请把这条信息反馈给管理员。");
+        }
 
         QrScanVerifier.Report worst = null;
         for (Path p : tails) {

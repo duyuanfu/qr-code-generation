@@ -94,14 +94,31 @@ public class GifOptions {
         return Math.max(16, (int) Math.round(qrSize * scale()));
     }
 
-    /** 衬底外扩边距。留得比羽化半径宽，否则柔光会被画布边缘切出一道硬边 */
+    /**
+     * 衬底外扩边距：二维码四周可见白边的**总**宽度（实心区 + 淡出带）。
+     *
+     * <p>它不是独立常量，而是「实心区 + 2σ」推出来的 —— 这样淡出一定在裁切之前走完
+     * （裁切点 alpha ≈ Φ(−2) ≈ 2%），边界看不见。早先 pad 与 σ 各自硬编码成 0.09 / 0.085，
+     * 两者几乎相等，裁切点 alpha 还有 0.5：白衬底就停在一条刀切线上，
+     * 看起来不是光晕而是一张白卡片。
+     */
     public int haloPad() {
-        return Math.max(4, (int) Math.round(qrPixels() * 0.09));
+        return haloCoreExtra() + (int) Math.ceil(haloFeather() * 2.0);
     }
 
-    /** 衬底羽化半径。要比 brief 的 0.04 更宽，否则 1.0 不透明的衬底会显出一块白卡 */
+    /**
+     * 衬底实心区比二维码本体多出的余量。
+     *
+     * <p>羽化会把矩形边缘向内「啃」掉约一个 sigma，最外侧的定位图案要是压在淡出带上，
+     * 白底就托不住它了。所以实心区必须比码区略大一圈，让整张码都落在 alpha≈1 的范围里。
+     */
+    public int haloCoreExtra() {
+        return Math.max(2, (int) Math.round(qrPixels() * 0.020));
+    }
+
+    /** 衬底羽化半径。淡出带 = 2σ，见 {@link #haloPad()} */
     public double haloFeather() {
-        return Math.max(10 * scale(), qrPixels() * 0.085);
+        return Math.max(3 * scale(), qrPixels() * 0.022);
     }
 
     /** 最终虚化半径：未显式指定时按 qrSize 等比（brief §10） */

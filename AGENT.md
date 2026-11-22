@@ -512,11 +512,11 @@ python .codebuddy/skills/ui-ux-pro-max/scripts/search.py "mobile viewport fixed 
 
 | 类 | 职责 |
 |---|---|
-| `GifOptions` | 参数的唯一来源；`normalize()` 负责夹取，`qrPixels()` / `haloPad()` / `haloFeather()` / `blurRadius()` / `framesHold()` 等派生值全从这里算 |
+| `GifOptions` | 参数的唯一来源；`normalize()` 负责夹取，`qrPixels()` / `haloPad()` / `haloCoreExtra()` / `haloFeather()` / `blurRadius()` / `framesHold()` 等派生值全从这里算 |
 | `ImageOps` | cover 裁切、bicubic 缩放、ARGB 拆合；`readDownscaled()` 用 `ImageReadParam` **边解码边降采样**；`darkLumaIn()` 取指定区域的亮度 **10 分位** |
 | `FastBlur` | 三次 box blur 逼近高斯，滑动窗口 O(W·H)，耗时与半径无关；**原地修改**并可复用调用方给的临时数组 |
 | `QrAlphaExtractor` | 白底二维码 → 透明底：`alpha = 255 - min(r,g,b)`，再反预乘 `rgb = (rgb - 255(1-a))/a` |
-| `QrLayerComposer` | 衬底光晕（圆角 + 羽化）+ 二维码本体（整体 opacity + 四角压暗） |
+| `QrLayerComposer` | 衬底光晕（实心区 + 淡出带 + 圆角）+ 二维码本体（整体 opacity + 四角压暗），宽度见下 |
 | `BundledFonts`（在 `common/`，不在本包） | 单例加载 `classpath:/fonts/NotoSansSC-Bold.otf`（`volatile` + 双检锁），失败降级 `SANS_SERIF`；`canRenderChinese()` 供启动自检 |
 | `TextRenderer` | 倒计时（左下锚点 `lb`）与说明文字（底部居中锚点 `mb`），描边 + 投影一次成型 |
 | `FrameComposer` | 时间轴：A 倒计时 → B 淡入缩放 → C 常驻。构造时**预渲染 base 与 QR 层**，117 帧循环只做贴图；`renderInto()` 复用同一张画布 |
@@ -630,9 +630,26 @@ brief 的 0.42 / 0.30 是浅底素材上的结论。换到「白底 + 深色主�
 
 1. **衬底不透明度要给满。** 0.95 和 0.90 都会挂 —— 半透明白衬底会把二维码的暗模块整体「提亮」，
    深色海报上尤其明显。看着更"融合"的那个版本，扫码率是 0。
-2. **衬底羽化必须有溢出空间。** 必须在 `size + 4×feather` 的画布上画圆角矩形再模糊，最后裁回；
+2. **衬底羽化必须有溢出空间。** 必须在大于矩形的画布上画圆角矩形再模糊，最后裁回；
    在同尺寸画布上模糊时边缘 alpha 恒为 1，**模糊等于没做**。
    现象：像素探针里 x=210 是纯背景色（亮度 94），x=211 直接跳到 232 —— 一条刀切直线，没有过渡。
+
+#### 衬底宽度：实心区与淡出带必须分开
+
+「白边太宽」和「白边是一张硬边白纸」是同一个几何问题的两面。衬底由两层构成：
+
+| 层 | 尺寸（320px 码宽下） | 作用 |
+|---|---|---|
+| 实心区 `haloCoreExtra` = 0.02×qrPx | 码区 + 6px | 保证**整张码**落在 alpha≈1 上，最外侧定位图案也有白色托底 |
+| 淡出带 = 2σ，σ = `haloFeather` = 0.022×qrPx | 再加 14px，`haloPad` = 21px | 羽化在带内走完，裁切点 alpha ≈ 2% |
+
+`haloPad()` 不再是独立常量，而是 **`haloCoreExtra() + ceil(2×haloFeather())`** 推出来的 ——
+三个数各写各的必然漂移（旧值 0.09 / 0.085 就漂成「pad 只比 σ 大 1px」，裁切点 alpha 停在 0.5）。
+现在这个关系由构造保证，`GifOptionsTest#haloFadeCompletesInsidePad` 在 5 种码宽 × 3 种画布上守着它，
+同时卡住上限：`haloPad ≤ 7.5% × qrPx`，超过就是肉眼可见的一圈白框。
+
+> 白边宽度只影响观感，不影响可扫性：可扫性取决于码区内部的 alpha（恒为 1）。
+> 但也别一路收窄到 `pad == coreExtra`：淡出带没了，同样会退回硬边。
 
 #### 回退顺序：`cornerMult → qrOpacity → qrSize`
 
@@ -933,7 +950,7 @@ docker compose up -d --build
 |---|---|
 | 端到端联调（tasks 5.5） | ✅ 已完成。四个脚本共 **69 项断言**全绿（详见 §10.1），另有后端 14 个单元测试 |
 | CI | ✅ `.github/workflows/ci.yml`：后端打包 + 前端类型检查/构建 + 真实 MySQL 的端到端联调 |
-| 单元测试 / 组件测试 | ⚠️ 后端已有 **38 个**（`TokenBucketRateLimiterTest` 5 + `AuthInterceptorTest` 9 + `FfmpegCliSyncTest` 6 + `FfmpegCliExtractTest` 2 + `GifEncoderGuardTest` 2 + `GifOptionsTest` 6 + `QrAlphaExtractorTest` 3 + `QrCleanerTest` 3 + `GifRenderSmokeTest` 1，另有 `GifParamProbeTest` 调参探针常驻 `@Disabled`），`mvn test` 全绿（38 run / 1 skipped）；业务 Controller、前端 Jest/Playwright 仍为空白 |
+| 单元测试 / 组件测试 | ⚠️ 后端已有 **39 个**（`TokenBucketRateLimiterTest` 5 + `AuthInterceptorTest` 9 + `FfmpegCliSyncTest` 6 + `FfmpegCliExtractTest` 2 + `GifEncoderGuardTest` 2 + `GifOptionsTest` 7 + `QrAlphaExtractorTest` 3 + `QrCleanerTest` 3 + `GifRenderSmokeTest` 1，另有 `GifParamProbeTest` 调参探针常驻 `@Disabled`），`mvn test` 全绿（39 run / 1 skipped）；业务 Controller、前端 Jest/Playwright 仍为空白 |
 | GIF 导出测试覆盖 | ⚠️ 只有「默认参数端到端跑通」+ 参数夹取 / 白底反推 / 编码器前置检查。`tasks.md` 8.4~8.8（回退重试、订单幂等、失败不核销、帧一致性）**无自动化**，改回退逻辑必须人工验证。素材自 `GifTestImages` 现场合成，不再依赖仓库里的示例图 |
 | GIF 真机扫码 | ⚠️ `tasks.md` 8.10 未做：成品只在 ZXing 三档下验证通过，**没有用微信扫过真机** |
 | GIF 并发上限 | ⚠️ `Semaphore(2)` 是进程内常量。多实例部署时实际并发 = 实例数 × 2，而 ffmpeg 是 CPU 密集型，上量前按机器核数重定 |

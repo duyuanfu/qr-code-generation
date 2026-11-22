@@ -71,4 +71,31 @@ class GifOptionsTest {
         large.setQrSize(480);
         assertTrue(large.blurRadius() > small.blurRadius(), "虚化半径应随二维码尺寸等比放大");
     }
+
+    /**
+     * 白边几何的两条不变量。
+     *
+     * <p>淡出带必须比 sigma 宽得多，否则裁切点上 alpha 还有一半 —— 白衬底会停在一条
+     * 刀切线上，看起来像「二维码贴在一张白卡上」。0.09 / 0.085 那组旧值就是这么翻车的。
+     *
+     * <p>另一头是「白边不要太宽」：pad 超过码宽 7.5% 就是肉眼可见的一圈白框。
+     */
+    @Test
+    void haloFadeCompletesInsidePad() {
+        for (int qrSize : new int[]{160, 240, 320, 480, 560}) {
+            for (int canvas : new int[]{480, 800, 1080}) {
+                GifOptions o = new GifOptions();
+                o.setQrSize(qrSize);
+                o.setOutputSize(canvas);
+                o.normalize();
+
+                double fade = (o.haloPad() - o.haloCoreExtra()) / o.haloFeather();
+                assertTrue(fade >= 1.9, "淡出带太窄，会出现硬边：qr=" + qrSize + " canvas=" + canvas
+                        + " fade=" + String.format("%.2f", fade));
+                assertTrue(o.haloPad() <= o.qrPixels() * 0.075, "白边过宽：qr=" + qrSize
+                        + " canvas=" + canvas + " pad=" + o.haloPad() + " qrPx=" + o.qrPixels());
+                assertTrue(o.haloCoreExtra() >= 2, "实心区至少要托住码区，留点余量");
+            }
+        }
+    }
 }

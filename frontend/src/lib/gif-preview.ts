@@ -203,11 +203,16 @@ function drawTextLayer(
 export function scaledMetrics(params: GifParams) {
   const s = params.outputSize / 800;
   const qrPx = Math.round(params.qrSize * s);
+  /** 实心区比码区多出的一圈，保证最外侧模块落在 alpha≈1 上 */
+  const haloCoreExtra = Math.max(2, Math.round(qrPx * 0.02));
+  const haloFeather = Math.max(3 * s, qrPx * 0.022);
   return {
     scale: s,
     qrPx,
-    haloPad: Math.round(qrPx * 0.09),
-    haloFeather: Math.max(10 * s, qrPx * 0.085),
+    haloCoreExtra,
+    haloFeather,
+    /** 白边总宽度 = 实心区 + 2σ，保证淡出在裁切前走完（与 GifOptions.haloPad() 同公式） */
+    haloPad: haloCoreExtra + Math.ceil(haloFeather * 2),
     blurRadius: ((params.blur < 0 ? 0.85 : params.blur) * qrPx) / 320,
   };
 }
@@ -222,8 +227,9 @@ export function buildPreviewAssets(
 ): PreviewAssets {
   const size = params.outputSize;
   const meter = scaledMetrics(params);
-  const { qrPx, haloPad, haloFeather, blurRadius } = meter;
+  const { qrPx, haloPad, haloCoreExtra, haloFeather, blurRadius } = meter;
   const haloSize = qrPx + haloPad * 2;
+  const coreSize = qrPx + haloCoreExtra * 2;
 
   const probe = createCanvas(8, 8).getContext('2d')!;
   const supportsFilter = filterSupported(probe);
@@ -231,15 +237,16 @@ export function buildPreviewAssets(
   const base = createCanvas(size, size);
   coverDraw(base, bg, size);
 
-  // 衬底：留 margin 才有羽化空间，和后端踩过的是同一个坑
-  const margin = Math.ceil(haloFeather * 2) + 2;
+  // 衬底：实心区略大于码区，淡出带在 pad 内走完（后端 buildHalo 同一套几何）
+  const margin = Math.ceil(haloFeather * 2.5) + 2;
   const haloWork = createCanvas(haloSize + margin * 2, haloSize + margin * 2);
   const hctx = haloWork.getContext('2d')!;
   hctx.filter = supportsFilter ? `blur(${haloFeather}px)` : 'none';
   hctx.fillStyle = `rgba(255,255,255,${params.haloAlpha < 0 ? 1 : params.haloAlpha})`;
-  const radius = haloSize * 0.06;
+  const radius = Math.min(coreSize * 0.06, ((haloSize - coreSize) / 2) * 0.75 + 2);
+  const coreOff = margin + (haloSize - coreSize) / 2;
   hctx.beginPath();
-  hctx.roundRect(margin, margin, haloSize, haloSize, radius);
+  hctx.roundRect(coreOff, coreOff, coreSize, coreSize, radius);
   hctx.fill();
   hctx.filter = 'none';
 

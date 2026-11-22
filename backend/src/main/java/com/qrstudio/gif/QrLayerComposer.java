@@ -29,8 +29,9 @@ public final class QrLayerComposer {
         int qrPx = opts.qrPixels();
         int pad = opts.haloPad();
         int haloSize = qrPx + pad * 2;
+        int coreSize = qrPx + opts.haloCoreExtra() * 2;
 
-        BufferedImage halo = buildHalo(haloSize, resolvedHalo, opts.haloFeather());
+        BufferedImage halo = buildHalo(haloSize, coreSize, resolvedHalo, opts.haloFeather());
 
         BufferedImage body = buildQrBody(qrRgba, qrPx, opts.getQrOpacity(), opts.getCornerMult());
 
@@ -50,20 +51,29 @@ public final class QrLayerComposer {
      * (rgb=128, a=128)，叠在深色底上就是一圈灰边 —— 那正是 brief §4.1
      * 「不允许出现可见矩形边界」要避免的东西。
      *
+     * <p>几何分两层，这是「白边太宽」这个问题的根：
+     * <ul>
+     *   <li><b>实心区</b>（{@code coreSize}）—— 略大于二维码本体，保证整张码都落在 alpha≈1 上；</li>
+     *   <li><b>淡出带</b>（{@code size} − {@code coreSize}）—— 由羽化完成，裁切处 alpha 已接近 0。</li>
+     * </ul>
+     * 两者几乎相等时（旧实现 pad 0.09 / σ 0.085 就是这样），模糊的尾巴全被裁掉，
+     * 边界停在 alpha=0.5，视觉上不是光晕而是一张白纸的硬边。
+     *
      * <p>关键细节：模糊必须有「溢出空间」。如果画布和矩形一样大，整张图 alpha
-     * 恒为 1，模糊等于没做，边界会是一条刀切的直线。所以先在四周各留
-     * {@code 2×feather} 的余量作图，模糊完再把中间裁回来。
+     * 恒为 1，模糊等于没做。所以先在四周各留 {@code 2.5×feather} 的余量作图，模糊完再把中间裁回来。
      */
-    private static BufferedImage buildHalo(int size, double alpha, double feather) {
-        int margin = (int) Math.ceil(feather * 2) + 2;
+    private static BufferedImage buildHalo(int size, int coreSize, double alpha, double feather) {
+        int margin = (int) Math.ceil(feather * 2.5) + 2;
         int work = size + margin * 2;
 
         BufferedImage img = ImageOps.newArgb(work, work);
         var g = img.createGraphics();
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g.setColor(new Color(255, 255, 255, (int) Math.round(255 * alpha)));
-        double arc = size * 0.06;
-        g.fill(new RoundRectangle2D.Double(margin, margin, size, size, arc, arc));
+        // 圆角刻意收得很小：衬底已经很窄，半径再大就会啃进四角定位图案的白色托底
+        double arc = Math.min(coreSize * 0.06, (size - coreSize) / 2.0 * 0.75 + 2);
+        double off = (work - coreSize) / 2.0;
+        g.fill(new RoundRectangle2D.Double(off, off, coreSize, coreSize, arc, arc));
         g.dispose();
 
         float[][] planes = ImageOps.splitArgb(img);

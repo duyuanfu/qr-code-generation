@@ -37,14 +37,41 @@ public class FfmpegCli {
         this.ffmpegPath = path;
     }
 
+    /** 当前配置的可执行文件名/路径，用于诊断接口回显 */
+    public String configuredPath() {
+        return ffmpegPath;
+    }
+
+    /**
+     * 探测结果缓存。
+     *
+     * <p>只缓存「成功」：失败不缓存，这样管理员装好 ffmpeg 之后即使不重启也能在下次请求恢复
+     * （要等到重启才生效的话，用户看到的现象是「装完了还是不行」，只会更困惑）。
+     * 成功值缓存是为了省掉每次生成都 fork 一个进程的几十毫秒。
+     */
+    private volatile String cachedVersion;
+
+    /** ffmpeg 是否可用。生成前必须先问一次，别等渲染完 117 帧才发现。 */
+    public boolean available() {
+        return version() != null;
+    }
+
     public String version() {
+        String cached = cachedVersion;
+        if (cached != null) {
+            return cached;
+        }
         try {
             Result r = run(List.of(ffmpegPath, "-version"));
             if (!r.ok()) {
                 return null;
             }
             String first = r.output().lines().findFirst().orElse("");
-            return first.isBlank() ? null : first.trim();
+            if (first.isBlank()) {
+                return null;
+            }
+            cachedVersion = first.trim();
+            return cachedVersion;
         } catch (Exception e) {
             return null;
         }

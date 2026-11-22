@@ -51,6 +51,23 @@ public class GifRenderService {
     }
 
     /**
+     * 编码器可用性前置检查。
+     *
+     * <p>为什么必须放在渲染之前：预检只渲染末帧、不碰 ffmpeg，所以 ffmpeg 缺失时
+     * **预检会通过**，用户付完钱进入生成，等 117 帧渲染完（3~5 秒）才在调色板那一步炸掉 ——
+     * 表现就是「等几秒直接报错」。这里花 50ms 先探一次，把失败提前到用户还没开始等的时候，
+     * 并且给出「去装 ffmpeg」而不是一串 CreateProcess error。
+     */
+    public void requireEncoder() {
+        if (!ffmpeg.available()) {
+            throw new GifException(503,
+                    "GIF 生成暂不可用：服务器上找不到 ffmpeg（当前配置为 “" + ffmpeg.configuredPath()
+                            + "”）。请联系管理员安装 ffmpeg 或用 app.gif.ffmpeg 指定可执行文件路径，"
+                            + "本次未扣费。");
+        }
+    }
+
+    /**
      * 渲染到指定路径。
      *
      * <p>中间帧落在 {@code {uploadDir}/.gif-tmp/{uuid}}，结束无条件删除：

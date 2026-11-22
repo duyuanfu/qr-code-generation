@@ -1,6 +1,8 @@
 package com.qrstudio.controller;
 
 import com.qrstudio.common.Result;
+import com.qrstudio.gif.FfmpegCli;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -12,7 +14,10 @@ import java.util.*;
 
 @RestController
 @RequestMapping("/api/system")
+@RequiredArgsConstructor
 public class SystemController {
+
+    private final FfmpegCli ffmpeg;
 
     /**
      * 虚拟网卡名特征（小写包含匹配）。
@@ -39,6 +44,26 @@ public class SystemController {
 
         Map<String, Object> res = new HashMap<>();
         res.put("addresses", addresses);
+        return Result.ok(res);
+    }
+
+    /**
+     * GIF 编码器自检。
+     *
+     * <p>把「启动日志里那一行」做成可远程访问的接口：GIF 生成报错时，第一个要排除的就是
+     * ffmpeg 在不在，让用户去翻容器日志远比打开一个 URL 麻烦。
+     * 只回显版本号与配置路径，不暴露文件系统结构。
+     */
+    @GetMapping("/gif-encoder")
+    public Result<?> gifEncoder() {
+        Map<String, Object> res = new LinkedHashMap<>();
+        String version = ffmpeg.version();
+        res.put("available", version != null);
+        res.put("version", version);
+        res.put("path", ffmpeg.configuredPath());
+        res.put("hint", version != null
+                ? "GIF 生成环境正常"
+                : "找不到 ffmpeg：容器内需安装（Docker 镜像已内置），或配置 app.gif.ffmpeg 指向可执行文件");
         return Result.ok(res);
     }
 

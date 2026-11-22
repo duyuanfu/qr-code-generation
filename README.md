@@ -98,7 +98,9 @@
 ```bash
 # 0. ffmpeg：GIF 导出依赖运行时调用它做两遍调色板编码
 #    Windows: winget install Gyan.FFmpeg   |  macOS: brew install ffmpeg   |  Debian/Ubuntu: apt install ffmpeg
-#    没有它不影响其它功能，只会在启动日志里留一条 ERROR，/gif 生成时报错
+#    没有它不影响其它功能：启动日志里会有一条 ERROR，/gif 点生成会立刻返回可读的 503
+#    （不会让你先付钱、等几秒、再报一个看不懂的错）
+#    自检地址：GET /api/system/gif-encoder
 ffmpeg -version
 
 # 1. 数据库：准备一个 MySQL 8，库名 qr_studio（JDBC 串已带 createDatabaseIfNotExist）
@@ -248,6 +250,9 @@ server {
   每次自动调整都会在结果里写明，不会悄悄改掉你设的参数。
 - **失败不扣费**。预检失败一分钱不花；生成失败订单保持未核销，改参数可以直接重试。
 - 生成属于**一次性导出**（¥3），产物永久可用，没有服务期，也不走活码那套 3 个月到期的逻辑。
+- **生成失败不扣费**：订单只在「GIF 已落盘且三档校验全过」时才核销，报错后可以直接重试。
+- 服务端没装 ffmpeg 时，点生成会**立刻**返回 503 并说明原因（可访问 `GET /api/system/gif-encoder` 自检），
+  而不是先付款、再等几秒、最后收到一个看不懂的错误。
 - 单次生成较吃 CPU，服务端限流同时只跑 2 个，繁忙时会返回「稍后再试」。
 
 ---

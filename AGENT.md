@@ -634,6 +634,20 @@ brief 的 0.42 / 0.30 是浅底素材上的结论。换到「白底 + 深色主�
 > `generate` 用 `tryAcquire(200ms)` 抢不到就 429，`precheck` 用无参 `tryAcquire()` 立即失败 ——
 > 预检本来就是「先问问行不行」，让它排队反而更糟。
 
+#### 失败要快，原因要说人话
+
+这条链路上踩过两次同一个坑：**错误发生在用户已经等了很久、甚至已经付了钱之后**。
+
+| 现象 | 根因 | 现在怎么挡 |
+|---|---|---|
+| 点生成 → 等 5 秒 → 500 | ffmpeg 缺失。**预检只渲染末帧、不编码，所以预检能过**；用户付钱后进入生成，117 帧渲染完（3~5s）才在 `palettegen` 崩 | `GifExportService.generate` 第一件事就是 `renderService.requireEncoder()`（一次 `-version` 探测，约 50ms），失败抛 **503** + 明确文案「服务器上找不到 ffmpeg（当前配置为 …）」 |
+| 点生成 → 等 5 秒 → 500，日志里什么都没有 | 只有 `IOException` 被翻译成 `GifException`，其它异常（OOM / NPE / AWTError）直接冒到容器变成白页 | 加 `catch (Throwable)`：`log.error` 打完整堆栈，返回「内部错误：OutOfMemoryError」这类带类名的文案 |
+
+配套：
+- `FfmpegCli.version()` 探测成功后缓存（省掉每次生成 fork 一次进程），**失败不缓存** —— 管理员装完 ffmpeg 不必重启就能恢复。
+- `GET /api/system/gif-encoder` 把启动日志里那行结论做成可远程访问的接口，排障时不用翻容器日志。
+- 失败不核销订单，用户可以直接重试，不重复付费。
+
 #### 计费与幂等
 
 - 计费键 `gif_export`（¥3.00，`valid_months = 0` 无服务期，`per_item = 0` 一次性），
@@ -840,6 +854,7 @@ GIF 是「扫不出来就抬参数再试」，因为那是美术参数，抬一�
 | GET | `/api/admin/orders` | admin | 订单流水 |
 | POST | `/api/admin/orders/{id}/approve` | admin | 确认到账 |
 | GET | `/api/system/network` | 公开 | 局域网 IP 探测（自定义域名提示用），**已过滤虚拟网卡**，见下 |
+| GET | `/api/system/gif-encoder` | 公开 | GIF 编码器自检：`{ available, version, path, hint }`。「生成等几秒后报错」时第一个要看的就是它 |
 
 > `/api/system/network` 只返回手机真能连上的地址。`NetworkInterface` 会把 Hyper-V 的
 > `vEthernet`、WSL、VMware、Docker 网桥、Clash/FlClash 的 TUN（常驻 `198.18.0.x`）统统列出来，

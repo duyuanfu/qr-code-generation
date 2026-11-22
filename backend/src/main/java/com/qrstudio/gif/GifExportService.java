@@ -144,6 +144,10 @@ public class GifExportService {
         try {
             GifOptions opts = options.normalize();
 
+            // 先问编码器在不在：ffmpeg 缺失时预检是能过的（预检不编码），
+            // 不前置检查的话用户会先付钱、再等 5 秒、然后拿到一句 CreateProcess error。
+            renderService.requireEncoder();
+
             Order order = resolveOrder(opts.getOrderId(), user);
             if (order != null && order.getResultUrl() != null && !order.getResultUrl().isBlank()) {
                 // 同一笔订单重复请求：直接给回上次的文件，不重渲、不二次收费
@@ -188,9 +192,19 @@ public class GifExportService {
 
             return new GenerateResult("/uploads/gif/" + outFile.getFileName(), meta,
                     attempt.outcome().report().asMap());
+        } catch (GifException e) {
+            // 业务异常原样抛出（422 建议参数、429 限流等），不要把 code 吞成 500
+            throw e;
         } catch (IOException e) {
-            log.error("GIF 生成失败: {}", e.getMessage(), e);
-            throw new GifException(500, "生成失败：" + e.getMessage());
+            log.error("GIF 生成失败（IO）: {}", e.getMessage(), e);
+            throw new GifException(500, "生成失败：" + e.getMessage() + "（本次未扣费，可稍后重试）");
+        } catch (Throwable t) {
+            // 兜住所有未预期异常（含 OOM / AWTError / NPE）：原来这些会直接冒到容器变成
+            // 没有上下文的 500 白页，日志里也不留痕迹，根本没法排查。
+            log.error("GIF 生成异常（未预期）: {}", t.toString(), t);
+            throw new GifException(500,
+                    "生成失败（内部错误：" + t.getClass().getSimpleName() + "），本次未扣费。"
+                            + "请把这条信息反馈给管理员，服务端日志里有完整堆栈。");
         } finally {
             generateSlots.release();
         }

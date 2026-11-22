@@ -12,7 +12,6 @@ import java.util.*;
  *   <li>{@link #validateMeta(String, long, long)} —— 只看文件名、大小，落盘前就能拦掉大部分非法请求；</li>
  *   <li>{@link #validateHeader(String, byte[])} —— 只读文件头若干字节做魔数嗅探，防止改扩展名伪装。</li>
  * </ol>
- * {@link #validate(String, byte[], long)} 是小文件场景的便捷组合（同时保留给单元测试使用）。
  */
 @Component
 public class FileValidator {
@@ -76,7 +75,7 @@ public class FileValidator {
     }
 
     /** 提取小写扩展名；没有扩展名时返回空串 */
-    public String extensionOf(String originalFilename) {
+    private static String extensionOf(String originalFilename) {
         if (originalFilename == null) return "";
         int dotIndex = originalFilename.lastIndexOf('.');
         return dotIndex >= 0 ? originalFilename.substring(dotIndex).toLowerCase() : "";
@@ -138,18 +137,6 @@ public class FileValidator {
         return pass();
     }
 
-    /** 小文件便捷组合校验（内容全量在内存中时使用） */
-    public ValidationResult validate(String originalFilename, byte[] fileBytes, long maxSizeBytes) {
-        if (fileBytes == null || fileBytes.length == 0) {
-            return fail("上传文件为空");
-        }
-        ValidationResult meta = validateMeta(originalFilename, fileBytes.length, maxSizeBytes);
-        if (!meta.isValid()) {
-            return meta;
-        }
-        return validateHeader(originalFilename, fileBytes);
-    }
-
     public boolean checkTextCompliance(String text) {
         if (text == null || text.trim().isEmpty()) {
             return true;
@@ -162,7 +149,7 @@ public class FileValidator {
         return true;
     }
 
-    public static String humanSize(long bytes) {
+    private static String humanSize(long bytes) {
         if (bytes >= 1024L * 1024 * 1024) {
             return String.format("%.1fGB", bytes / (1024.0 * 1024 * 1024));
         }

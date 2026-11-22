@@ -26,8 +26,6 @@ public class PricingService {
     public static final String ACTION_EXPORT = "static_export";
     /** 二维码动图（GIF）导出：一次生成扣一次，与静态导出同属「一次性交付物」 */
     public static final String ACTION_GIF = "gif_export";
-    /** 商品条形码标签导出：交付 PNG + SVG 两份，同样是一次性扣费 */
-    public static final String ACTION_BARCODE = "barcode_export";
 
     private final PricingConfigMapper pricingConfigMapper;
 

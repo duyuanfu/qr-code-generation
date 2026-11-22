@@ -1,12 +1,55 @@
 package com.qrstudio.gif;
 
+import javax.imageio.ImageIO;
+import javax.imageio.ImageReadParam;
+import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
+import java.io.IOException;
+import java.nio.file.Path;
+import java.util.Iterator;
 
 /** 图像基础操作：cover 裁切、高质量缩放、ARGB 存取。 */
 public final class ImageOps {
 
     private ImageOps() {
+    }
+
+    /**
+     * 解码时就降采样，结果的最短边不小于 {@code maxSide}。
+     *
+     * <p>为什么不能直接 {@code ImageIO.read}：解码是「一次性铺开整张位图」的，
+     * 一张 6000×6000 的 JPEG 解出来就是 144MB，而画布最多 1080 —— 中间那 140MB
+     * 纯属浪费，并发两个就是一次 OOM。用 {@link ImageReadParam#setSourceSubsampling}
+     * 让 decoder 边读边抽样，峰值内存直接按 step² 缩下来。
+     *
+     * <p>按最短边算 step，是因为后续 {@link #cover} 需要铺满正方形画布：
+     * 长边多大都不影响，短边不够就必须放大，反而更糊。
+     */
+    public static BufferedImage readDownscaled(Path path, int maxSide) throws IOException {
+        try (ImageInputStream in = ImageIO.createImageInputStream(path.toFile())) {
+            if (in == null) {
+                return null;
+            }
+            Iterator<ImageReader> readers = ImageIO.getImageReaders(in);
+            if (!readers.hasNext()) {
+                return null;
+            }
+            ImageReader reader = readers.next();
+            try {
+                reader.setInput(in, true, true);
+                int shortest = Math.min(reader.getWidth(0), reader.getHeight(0));
+                int step = Math.max(1, shortest / Math.max(1, maxSide));
+                ImageReadParam param = reader.getDefaultReadParam();
+                if (step > 1) {
+                    param.setSourceSubsampling(step, step, 0, 0);
+                }
+                return reader.read(0, param);
+            } finally {
+                reader.dispose();
+            }
+        }
     }
 
     /**
@@ -18,6 +61,10 @@ public final class ImageOps {
     public static BufferedImage cover(BufferedImage src, int size) {
         int sw = src.getWidth();
         int sh = src.getHeight();
+        if (sw == size && sh == size && src.getType() == BufferedImage.TYPE_INT_RGB) {
+            // 尺寸与类型都已就位：再 resize 一次只是白白复制 2.5MB
+            return src;
+        }
         double scale = Math.max(size / (double) sw, size / (double) sh);
         int dw = Math.max(1, (int) Math.round(sw * scale));
         int dh = Math.max(1, (int) Math.round(sh * scale));
@@ -106,16 +153,6 @@ public final class ImageOps {
     public static int clamp255(float v) {
         int i = Math.round(v);
         return i < 0 ? 0 : (i > 255 ? 255 : i);
-    }
-
-    /** 整层乘一个 alpha 系数（等价于 brief 里的 putalpha） */
-    public static void multiplyAlpha(BufferedImage img, double factor) {
-        int[] px = pixels(img);
-        for (int i = 0; i < px.length; i++) {
-            int a = (px[i] >>> 24) & 0xFF;
-            int na = (int) Math.round(a * factor);
-            px[i] = (na << 24) | (px[i] & 0x00FFFFFF);
-        }
     }
 
     /** 底图平均亮度，用来决定衬底要多实 */

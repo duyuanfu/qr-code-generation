@@ -2,7 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { QrCode, Layers, ScanLine, Sparkles, ShieldAlert, LogOut, LogIn, Clapperboard, ScanBarcode } from 'lucide-react';
+import { QrCode, Layers, ScanLine, Sparkles, ShieldAlert, LogOut, LogIn, Clapperboard } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/components/auth/AuthContext';
@@ -88,13 +88,6 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, onTabChange }) => {
             <Clapperboard className="h-4 w-4" aria-hidden="true" />
             动图导出
           </Link>
-          <Link
-            href="/barcode"
-            className="flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium text-slate-600 transition-all hover:text-slate-900"
-          >
-            <ScanBarcode className="h-4 w-4" aria-hidden="true" />
-            条形码
-          </Link>
         </div>
 
         {/* 右侧账号区 */}
@@ -160,13 +153,6 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, onTabChange }) => {
         >
           <Clapperboard className="h-4 w-4" aria-hidden="true" />
           动图
-        </Link>
-        <Link
-          href="/barcode"
-          className="flex min-h-[40px] shrink-0 items-center gap-1.5 rounded-lg px-3 text-[13px] font-medium text-slate-600 hover:text-slate-900"
-        >
-          <ScanBarcode className="h-4 w-4" aria-hidden="true" />
-          条形码
         </Link>
       </div>
     </header>

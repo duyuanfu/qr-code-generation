@@ -123,8 +123,9 @@ public final class QrLayerComposer {
         int w = layer.getWidth();
         int h = layer.getHeight();
         float[][] planes = ImageOps.splitArgb(layer);
+        float[] scratch = new float[w * h];
         for (int c = 0; c < 4; c++) {
-            planes[c] = FastBlur.gaussian(planes[c], w, h, sigma);
+            planes[c] = FastBlur.gaussian(planes[c], scratch, w, h, sigma);
         }
         return ImageOps.mergeArgb(planes, w, h);
     }

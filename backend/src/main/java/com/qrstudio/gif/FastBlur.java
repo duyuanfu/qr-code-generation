@@ -19,19 +19,31 @@ public final class FastBlur {
     }
 
     /**
-     * 对单个浮点平面做高斯模糊，原地返回新数组。
+     * 对单个浮点平面做高斯模糊。
+     *
+     * <p>**原地修改**并返回同一个数组：调用方拿到结果就把原引用丢掉，
+     * 之前在这先 clone 一份等于每平面多分配一次 2.5MB（800 画布 × 4 平面 = 10MB/次）。
      *
      * @param sigma 标准差（≈ Pillow 的 GaussianBlur radius）
      */
     public static float[] gaussian(float[] plane, int w, int h, double sigma) {
+        return gaussian(plane, null, w, h, sigma);
+    }
+
+    /**
+     * 同上，但由调用方提供临时数组 {@code scratch}。
+     *
+     * <p>同一个尺寸连做四个平面时复用它，就把每趟的临时分配从 4 次降到 1 次。
+     */
+    public static float[] gaussian(float[] plane, float[] scratch, int w, int h, double sigma) {
         if (sigma < 0.35 || w <= 1 || h <= 1) {
-            return plane.clone();
+            return plane;
         }
         double win = Math.sqrt(4 * sigma * sigma + 1);
         int r = Math.max(1, (int) Math.round((win - 1) / 2));
 
-        float[] a = plane.clone();
-        float[] b = new float[plane.length];
+        float[] a = plane;
+        float[] b = (scratch != null && scratch.length == plane.length) ? scratch : new float[plane.length];
         for (int pass = 0; pass < 3; pass++) {
             boxH(a, b, w, h, r);
             boxV(b, a, w, h, r);

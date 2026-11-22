@@ -116,9 +116,7 @@ VALUES
 -- 静态码内容不落库、无服务端成本，永久有效；收费点是导出真实内容的高清 PNG（单张或批量 ZIP）
 ('price-static-export', 'static_export', '二维码图片导出（单张 / 批量 ZIP）', 2.00, 1),
 -- 动图导出：产物是文件，不存在服务期（valid_months 由 SchemaMigrator 置 0）
-('price-gif-export', 'gif_export', '二维码动图（GIF）导出', 3.00, 1),
--- 商品条形码标签：交付 PNG + SVG，同为一次性文件交付物
-('price-barcode-export', 'barcode_export', '商品条形码标签导出', 2.00, 1);
+('price-gif-export', 'gif_export', '二维码动图（GIF）导出', 3.00, 1);
 
 -- Initialize default payment config if empty
 INSERT IGNORE INTO payment_configs (id, qr_image_url, qr_type, notice_text, enabled)

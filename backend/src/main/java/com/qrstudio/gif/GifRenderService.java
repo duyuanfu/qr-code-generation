@@ -116,12 +116,15 @@ public class GifRenderService {
             param.setCompressionQuality(0.5f);
         }
         try {
+            // 复用同一张画布：117 帧逐帧新建会白白分配约 290MB，GC 全压在渲染耗时上
+            int side = composer.canvasSize();
+            BufferedImage canvas = new BufferedImage(side, side, BufferedImage.TYPE_INT_RGB);
             for (int i = 0; i < total; i++) {
-                BufferedImage frame = composer.frame(i);
+                composer.renderInto(i, canvas);
                 Path file = workDir.resolve(String.format("f%04d.png", i + 1));
                 try (ImageOutputStream out = ImageIO.createImageOutputStream(file.toFile())) {
                     writer.setOutput(out);
-                    writer.write(null, new IIOImage(frame, null, null), param);
+                    writer.write(null, new IIOImage(canvas, null, null), param);
                 }
             }
         } finally {

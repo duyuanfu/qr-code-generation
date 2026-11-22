@@ -9,7 +9,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -42,6 +41,14 @@ public class GifExportService {
     private static final int MAX_ATTEMPTS = 6;
 
     private static final long MB = 1024L * 1024L;
+
+    /**
+     * 二维码源图解码的目标边长。
+     *
+     * <p>画布最大 1080 时 {@code qrPixels()} 最大 756，1200 留了足够余量；
+     * 而用户随手拍/截的二维码常有 2000~3000px，整图解码只是白占内存。
+     */
+    private static final int QR_SOURCE_SIDE = 1200;
 
     private final GifRenderService renderService;
     private final QrScanVerifier verifier;
@@ -80,8 +87,8 @@ public class GifExportService {
         long start = System.currentTimeMillis();
         try {
             GifOptions opts = options.normalize();
-            BufferedImage bg = readImage(opts.getBackgroundUrl(), "底图");
-            BufferedImage qr = readImage(opts.getQrUrl(), "二维码图片");
+            BufferedImage bg = readImage(opts.getBackgroundUrl(), "底图", backgroundSide(opts));
+            BufferedImage qr = readImage(opts.getQrUrl(), "二维码图片", QR_SOURCE_SIDE);
             requireDecodableQr(qr);
 
             QrScanVerifier.Report report = renderLastFrame(opts, bg, qr);
@@ -154,8 +161,8 @@ public class GifExportService {
                 return cachedResult(order);
             }
 
-            BufferedImage bg = readImage(opts.getBackgroundUrl(), "底图");
-            BufferedImage qr = readImage(opts.getQrUrl(), "二维码图片");
+            BufferedImage bg = readImage(opts.getBackgroundUrl(), "底图", backgroundSide(opts));
+            BufferedImage qr = readImage(opts.getQrUrl(), "二维码图片", QR_SOURCE_SIDE);
             requireDecodableQr(qr);
 
             Path outFile = outputFile(order);
@@ -382,21 +389,28 @@ public class GifExportService {
         return path;
     }
 
-    private BufferedImage readImage(String url, String label) {
+    /**
+     * 读素材，解码时按需要降采样。
+     *
+     * <p>底图最终会被 cover 到画布边长（≤1080），所以源图只要比画布大一点就够；
+     * 直接整图解码一张 6000px 的照片会瞬间吃掉 140MB，并发两个就 OOM。
+     */
+    private BufferedImage readImage(String url, String label, int maxSide) {
         Path path = resolveUpload(url, label);
         try {
-            BufferedImage img = ImageIO.read(path.toFile());
+            BufferedImage img = ImageOps.readDownscaled(path, maxSide);
             if (img == null) {
                 throw new GifException(400, label + "格式不受支持（请用 JPG / PNG）");
-            }
-            // 超大图直接读进来会 OOM；正常素材不会到这个量级
-            if (img.getWidth() > 6000 || img.getHeight() > 6000) {
-                throw new GifException(400, label + "尺寸过大（最长边需 ≤ 6000px）");
             }
             return img;
         } catch (IOException e) {
             throw new GifException(400, label + "读取失败：" + e.getMessage());
         }
+    }
+
+    /** 底图：画布的 1.5 倍足够，再多也只是给 cover 增加工作量 */
+    private static int backgroundSide(GifOptions opts) {
+        return Math.max(1600, opts.getOutputSize() * 3 / 2);
     }
 
     /** 二维码原图都解不出，说明传错了图，早点拦住别浪费一次完整渲染 */

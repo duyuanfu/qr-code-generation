@@ -30,7 +30,8 @@ public class SchemaMigrator implements ApplicationRunner {
     private static final String PRICING_V1 = "2026-10-pricing-tiers-v1";
     private static final String PRICING_V2 = "2026-10-per-item-pricing-v2";
     private static final String GIF_V3 = "2026-11-gif-export-v3";
-    private static final String BARCODE_V4 = "2026-11-barcode-label-v4";
+    /** 条形码标签功能已下线：清掉它留下的价目行，免得后台挂着一个点不动的计费项 */
+    private static final String REMOVE_BARCODE_V4 = "2026-11-remove-barcode-v4";
 
     private final JdbcTemplate jdbcTemplate;
 
@@ -73,10 +74,11 @@ public class SchemaMigrator implements ApplicationRunner {
                 log.info("已应用 {} 动图导出计费迁移", GIF_V3);
             }
 
-            // 5. 商品条形码标签导出计费项
-            if (markApplied(BARCODE_V4)) {
-                applyBarcodeExportPricing();
-                log.info("已应用 {} 条形码标签计费迁移", BARCODE_V4);
+            // 5. 条形码标签功能下线：清掉旧库里残留的计费项
+            if (markApplied(REMOVE_BARCODE_V4)) {
+                int removed = jdbcTemplate.update(
+                        "DELETE FROM pricing_configs WHERE item_key = 'barcode_export'");
+                log.info("已应用 {} 条形码计费项清理，移除 {} 行", REMOVE_BARCODE_V4, removed);
             }
         } catch (Exception e) {
             // 迁移失败不应该阻止服务启动，但要留下明确日志
@@ -213,26 +215,6 @@ public class SchemaMigrator implements ApplicationRunner {
         jdbcTemplate.update(
                 "UPDATE pricing_configs SET valid_months = 0, per_item = 0, included_size_mb = 0, "
                         + "step_size_mb = 0, step_price = 0, sort_order = 950 WHERE item_key = 'gif_export'");
-    }
-
-    /**
-     * 商品条形码标签的计费项。
-     *
-     * <p>与 {@code static_export}（同为 ¥2）**同价不同键**：后台按 {@code action_type}
-     * 分组统计，混用同一个键会让两类导出在报表里分不开；以后想单独调价也不用写迁移。
-     *
-     * <p>价格交给 {@code INSERT IGNORE}，不覆盖管理员改过的值；但「无服务期、不按件累加」
-     * 是这一计费项的业务定义（产物是文件，一次导出一份），固定写死。
-     */
-    private void applyBarcodeExportPricing() {
-        jdbcTemplate.update(
-                "INSERT IGNORE INTO pricing_configs (id, item_key, item_name, price, enabled) "
-                        + "VALUES (?, ?, ?, ?, 1)",
-                "price-barcode-export", "barcode_export", "商品条形码标签导出", new java.math.BigDecimal("2.00"));
-
-        jdbcTemplate.update(
-                "UPDATE pricing_configs SET valid_months = 0, per_item = 0, included_size_mb = 0, "
-                        + "step_size_mb = 0, step_price = 0, sort_order = 960 WHERE item_key = 'barcode_export'");
     }
 
     /** 付费弹窗的默认提示语：补充 3 个月有效期与合规免责声明 */

@@ -4,7 +4,6 @@ import org.junit.jupiter.api.Test;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
-import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -12,20 +11,18 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
- * 真实素材上的端到端冒烟：渲染 → 编码 → 抽帧 → 解码。
+ * 端到端冒烟：渲染 → 编码 → 抽帧 → 解码。
  *
  * <p>不做参数化的细粒度断言（那是单元测试的事），只回答一个问题：
- * 「用仓库里的 content.jpg + qr.jpg 跑默认参数，能不能产出可扫的 GIF」。
- * 没有 ffmpeg 或素材缺失时跳过，不让 CI 因环境问题红掉。
+ * 「默认参数跑一遍，能不能产出可扫的 GIF」。
+ *
+ * <p>素材现场合成（见 {@link GifTestImages}），不再依赖仓库里的示例图片 ——
+ * 那些图被删掉后本测试会永远跳过，等于没有覆盖。只有 ffmpeg 缺失时才跳过。
  */
 class GifRenderSmokeTest {
 
     @Test
     void rendersScannableGifWithDefaultOptions() throws Exception {
-        File bg = new File("../content.jpg");
-        File qr = new File("../qr.jpg");
-        assumeTrue(bg.isFile() && qr.isFile(), "缺少测试素材 content.jpg / qr.jpg，跳过");
-
         FfmpegCli ffmpeg = new FfmpegCli();
         assumeTrue(ffmpeg.version() != null, "本机没有 ffmpeg，跳过");
 
@@ -35,8 +32,8 @@ class GifRenderSmokeTest {
             render.setUploadDirPath(work.toString());
 
             GifOptions opts = new GifOptions().normalize();
-            BufferedImage bgImg = ImageIO.read(bg);
-            BufferedImage qrImg = ImageIO.read(qr);
+            BufferedImage bgImg = GifTestImages.poster(1000);
+            BufferedImage qrImg = GifTestImages.qr(GifTestImages.SAMPLE_URL, 600);
 
             Path out = work.resolve("out.gif");
             GifRenderService.Outcome result = render.render(opts, bgImg, qrImg, out);

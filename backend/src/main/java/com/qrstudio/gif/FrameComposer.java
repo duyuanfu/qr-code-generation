@@ -60,11 +60,26 @@ public class FrameComposer {
         return framesCountdown + framesFade + framesHold;
     }
 
-    /** 渲染第 index 帧（0 基） */
+    /** 画布边长（正方形），供复用画布的调用方分配一次 */
+    public int canvasSize() {
+        return size;
+    }
+
+    /** 渲染第 index 帧（0 基）。每次新建画布，不适合循环里用，见 {@link #renderInto} */
     public BufferedImage frame(int index) {
+        return renderInto(index, new BufferedImage(size, size, BufferedImage.TYPE_INT_RGB));
+    }
+
+    /**
+     * 把第 index 帧渲染进给定画布。
+     *
+     * <p>写帧序列时有 117 帧要画，每帧都新建一张画布等于白扔 117 × size² × 4 字节
+     * （800 画布下约 290MB 的分配量），GC 压力直接压在渲染耗时上。复用同一张反而安全：
+     * 每帧第一件事就是 {@code drawImage(base)} 铺满整张画布，不存在需要先擦除的残留。
+     */
+    public BufferedImage renderInto(int index, BufferedImage canvas) {
         double s = opts.scale();
 
-        BufferedImage canvas = new BufferedImage(size, size, BufferedImage.TYPE_INT_RGB);
         Graphics2D g = canvas.createGraphics();
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);

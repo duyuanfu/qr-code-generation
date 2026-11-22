@@ -5,6 +5,7 @@ import {
   AlertCircle,
   CheckCircle2,
   Download,
+  Eraser,
   ImagePlus,
   Loader2,
   QrCode,
@@ -21,6 +22,7 @@ import { authHeaders, uploadSingleFile } from '@/lib/api-client';
 import { buildPreviewAssets, loadImage, type PreviewAssets } from '@/lib/gif-preview';
 import {
   DEFAULT_GIF_PARAMS,
+  type CleanQrResult,
   type GifParams,
   type GifSuggestion,
   type GenerateResult,
@@ -64,6 +66,7 @@ export const GifWorkbench: React.FC = () => {
   const [bgImg, setBgImg] = useState<HTMLImageElement | null>(null);
   const [qrImg, setQrImg] = useState<HTMLImageElement | null>(null);
   const [uploading, setUploading] = useState<'bg' | 'qr' | null>(null);
+  const [cleaningQr, setCleaningQr] = useState(false);
 
   const [checking, setChecking] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -148,6 +151,38 @@ export const GifWorkbench: React.FC = () => {
   };
 
   const ready = Boolean(params.backgroundUrl && params.qrUrl && assets);
+
+  /**
+   * 去掉二维码中间的产品图案。
+   *
+   * <p>服务端做的是「解码 → 按同一内容重绘」而不是涂白：图案盖住的位置本来就是
+   * 数据模块，涂白只是把干扰换成错误模块，能不能扫全看容错率。重绘后的码是
+   * 干净的标准二维码，代价是原图的配色/圆点样式不保留。
+   */
+  const handleStripLogo = async () => {
+    if (!params.qrUrl) return;
+    if (!user) {
+      openAuthModal();
+      return;
+    }
+    setCleaningQr(true);
+    setError(null);
+    try {
+      const res = await postGif<CleanQrResult>('/api/gif/clean-qr', { url: params.qrUrl });
+      if (!res.ok || !res.data) {
+        setError(res.message || '去除图案失败，请重试');
+        return;
+      }
+      // 先把新图读进 <img>，再换 URL：assets 重建时用的就是重绘后的二维码
+      const img = await loadImage(res.data.url);
+      setQrImg(img);
+      patch({ qrUrl: res.data.url });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '去除图案失败，请重试');
+    } finally {
+      setCleaningQr(false);
+    }
+  };
 
   /** 走完整流程：预检 → （需要时）支付 → 生成 */
   const runGenerate = async (orderId?: string) => {
@@ -243,11 +278,29 @@ export const GifWorkbench: React.FC = () => {
           />
           <UploadCard
             label="二维码"
-            hint="黑码白底的清晰截图，会在动图里淡入"
+            hint="黑码白底的清晰截图，会在动图里淡入；中间带产品图案的可点下方按钮重绘"
             url={params.qrUrl}
             icon={<QrCode className="h-4 w-4" aria-hidden="true" />}
             loading={uploading === 'qr'}
             onPick={(f) => handleUpload('qr', f)}
+            footer={
+              params.qrUrl ? (
+                <button
+                  type="button"
+                  onClick={handleStripLogo}
+                  disabled={cleaningQr}
+                  title="按二维码里的内容重绘一张标准二维码，中间的产品图案会被去掉（原图配色不保留）"
+                  className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-medium text-slate-500 transition-colors hover:text-slate-800 disabled:opacity-60"
+                >
+                  {cleaningQr ? (
+                    <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Eraser className="h-3 w-3" aria-hidden="true" />
+                  )}
+                  {cleaningQr ? '正在重绘…' : '去掉中间图案'}
+                </button>
+              ) : null
+            }
           />
         </div>
 
@@ -341,7 +394,9 @@ const UploadCard: React.FC<{
   icon: React.ReactNode;
   loading: boolean;
   onPick: (file: File) => void;
-}> = ({ label, hint, url, icon, loading, onPick }) => {
+  /** 卡片底部的附加操作（如二维码的「去掉中间图案」） */
+  footer?: React.ReactNode;
+}> = ({ label, hint, url, icon, loading, onPick, footer }) => {
   const inputRef = useRef<HTMLInputElement>(null);
   return (
     <div className="relative overflow-hidden rounded-2xl border border-dashed border-slate-300 bg-white p-3">
@@ -389,6 +444,7 @@ const UploadCard: React.FC<{
         </button>
       )}
       <p className="mt-2 text-[10px] leading-relaxed text-slate-400">{hint}</p>
+      {footer}
     </div>
   );
 };

@@ -19,6 +19,14 @@ import java.util.Map;
  */
 public class FrameComposer {
 
+    /**
+     * 文案字号（800 基准，实际乘 scale）。
+     *
+     * <p>倒计时与说明文字共用同一号 —— 两段文字前后脚出现，一大一小会被读成
+     * 「主标题 + 脚注」，而这里它们本来就是同一句话的两半。
+     */
+    private static final double TEXT_FONT = 80;
+
     private final GifOptions opts;
     private final int size;
 
@@ -112,7 +120,7 @@ public class FrameComposer {
         String text = opts.getCountdownTemplate().replace("{n}", String.valueOf(n));
         TextRenderer.Layer layer = textCache.computeIfAbsent("cd:" + text, k ->
                 TextRenderer.render(text,
-                        (float) (80 * s),
+                        (float) (TEXT_FONT * s),
                         (float) Math.max(2, 5 * s),
                         Color.WHITE,
                         new Color(25, 25, 25, 235),
@@ -148,16 +156,38 @@ public class FrameComposer {
             return;
         }
         TextRenderer.Layer layer = textCache.computeIfAbsent("cap:" + opts.getCaption(), k ->
-                TextRenderer.render(opts.getCaption(),
-                        (float) (40 * s),
-                        (float) Math.max(2, 5 * s),
-                        Color.WHITE,
-                        new Color(30, 30, 30),
-                        0));
+                renderCaption(opts.getCaption(), s));
         TextRenderer.drawAt(g, layer, "mb",
                 size / 2,
                 (int) Math.round(size - 40 * s),
                 alpha);
+    }
+
+    /**
+     * 说明文字层。
+     *
+     * <p>字号与倒计时**完全一致**（都是 80×scale）：两段文字在时间轴上前后脚出现，
+     * 一样大才不显得一个是标题一个是脚注。
+     *
+     * <p>代价是长文案会顶到画布边上（24 个汉字 × 80px = 1920px，比 800 的画布还宽），
+     * 所以超出可用宽度时按比例缩字号 —— 只在真的放不下时才缩，默认文案
+     * 「截图保存，扫一扫」在任何画布尺寸下都保持与倒计时同号。
+     */
+    private TextRenderer.Layer renderCaption(String text, double s) {
+        float font = (float) (TEXT_FONT * s);
+        float stroke = (float) Math.max(2, 5 * s);
+        TextRenderer.Layer layer = TextRenderer.render(text, font, stroke,
+                Color.WHITE, new Color(30, 30, 30), 0);
+
+        // 可用宽度与左右留白一致（倒计时也贴在 52×scale 的位置）
+        double maxWidth = size - 2 * 52 * s;
+        double width = layer.image().getWidth();
+        if (width <= maxWidth || width <= 0) {
+            return layer;
+        }
+        float shrunk = (float) (font * maxWidth / width);
+        return TextRenderer.render(text, Math.max(12f, shrunk),
+                Math.max(2f, stroke * shrunk / font), Color.WHITE, new Color(30, 30, 30), 0);
     }
 
     /** 二维码图层在画布中的包围盒 [x, y, w, h]，供前端对齐预览 */

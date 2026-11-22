@@ -524,6 +524,8 @@ python .codebuddy/skills/ui-ux-pro-max/scripts/search.py "mobile viewport fixed 
 | `QrScanVerifier` | ZXing 三档解码：原尺寸 / 640+模糊 / 480+模糊，每档 3 次尝试 |
 | `GifRenderService` | 渲染 → 编码 → 校验 → 落盘，返回 `Outcome`（帧数 / 体积 / 校验报告 / 耗时） |
 | `GifExportService` | 编排层：预检 / 订单校验 / 回退重试 / 核销 |
+| `QrCleaner` | 「去掉中间图案」：解码原图拿内容 → 按 1024² 重绘一张干净二维码，见下 |
+| `UploadPath` | `resolve(uploadDir, url, label)`：`/uploads/xxx` → 本地 `Path`，**防目录穿越**的唯一出口（`GifExportService` 与 `QrCleaner` 共用） |
 | `GifStartupCheck` | `@Order(10)` 启动自检 ffmpeg 与字体，缺失只打 ERROR **不阻断启动** |
 | `GifCleanupTask` | 每天 04:30 清 `gif/*.gif`（7 天）与 `.gif-tmp/*`（1 小时）残留 |
 
@@ -671,6 +673,41 @@ brief 的 0.42 / 0.30 是浅底素材上的结论。换到「白底 + 深色主�
 - `GET /api/system/gif-encoder` 把启动日志里那行结论做成可远程访问的接口，排障时不用翻容器日志。
 - 失败不核销订单，用户可以直接重试，不重复付费。
 
+#### 去掉二维码中间的图案（重绘，不是擦除）
+
+用户的二维码常带自家 logo 压在中间。做的是 **解码 → 重绘**，不是把中间涂白：
+
+```
+读图（≤1600 边长降采样）→ QrScanVerifier.decode 拿原文 → MultiFormatWriter 按 EC=H / margin=4
+重新编码成 1024² 纯黑白 PNG → 写 SHA-256 命名的文件
+```
+
+- **为什么重绘**：涂白只能盖住 logo 的**可见部分**，二维码是有纠错的 —— 被覆盖的模块有多少、
+  纠错余量还剩多少，涂白后完全无法判断；而且原始 logo 区一旦被涂掉，那部分数据就永久丢失。
+  重绘是**按解码出的原文重新生成**，纠错级别直接给到 H（30% 冗余），扫不出来是不可能的。
+- **代价要跟用户说清楚**：输出是标准黑白二维码，**原图的自定义配色、圆点样式、渐变全部丢失**。
+  前端按钮旁必须写明这一点，别让用户以为是"无损去水印"。
+- **EC 用 H 而不是 M/L**：这张图后续还要被贴到海报上、被 GIF 的 opacity/模糊再啃一遍，
+  重绘阶段多吃掉的冗余，后面每一层都能受益。
+
+落盘走内容寻址（`sha256(字节).png`），同一张图重复点「去掉图案」不会堆文件 —— 与上传管道同一套规则。
+
+#### 说明文字与倒计时同字号
+
+二维码下方那句「截图保存，扫一扫」和左下角「等待 n 秒」原本各用一个字号常量，视觉上一大一小。
+现在合并成 `FrameComposer.TEXT_FONT = 80`（前端 `gif-preview.ts` 同名常量同步），两边共用：
+
+| 位置 | 锚点 | 处理 |
+|---|---|---|
+| 倒计时 | 左下 `lb` | 直接 `TEXT_FONT × scale` |
+| 说明文字 | 底部居中 `mb` | 从 `TEXT_FONT × scale` 起算，**宽度超过 `size - 2×52×scale` 时等比缩小**（`fitFontSize` / `renderCaption`），描边宽度同比例收，下限 12px |
+
+> 只缩不换行是有意的：说明文字是单行短语，换行会破坏底部居中构图；
+> 等比缩小 + 下限保护能保证「再长也放得下、再短也不会小到看不清」。
+> 侧栏提示文案同步改成「字号与倒计时文字一致，太长时自动缩小以放得下」，
+> 免得用户以为留空/超长会撑破画面。
+
+
 #### 计费与幂等
 
 - 计费键 `gif_export`（¥3.00，`valid_months = 0` 无服务期，`per_item = 0` 一次性），
@@ -706,6 +743,7 @@ brief 的 0.42 / 0.30 是浅底素材上的结论。换到「白底 + 深色主�
 | POST | `/api/order/mock-pay` | 本人/管理员 | 开发环境免审 |
 | POST | `/api/gif/precheck` | **匿名** | GIF **预检**：只渲染末帧做三档解码，免费、不要订单、**不要求登录**；失败返回 `422 + suggestion` |
 | POST | `/api/gif/generate` | 登录 + `paid` 订单 | GIF **生成**：渲染→编码→抽末 5 帧复核→落盘核销；`orderId` 已出过图则幂等返回 |
+| POST | `/api/gif/clean-qr` | 登录 | 「去掉中间图案」：body `{url}`，解码原文后重绘 1024² 干净二维码，返回 `{url, content, size}`；识别不出 → 400 |
 | GET | `/api/admin/users` | admin | 用户列表 |
 | POST | `/api/admin/users/{id}/toggle-status` | admin | 启用/禁用 |
 | POST | `/api/admin/users/{id}/role` | admin | 升降级 |
@@ -721,7 +759,7 @@ brief 的 0.42 / 0.30 是浅底素材上的结论。换到「白底 + 深色主�
 | GET | `/api/admin/orders` | admin | 订单流水 |
 | POST | `/api/admin/orders/{id}/approve` | admin | 确认到账 |
 | GET | `/api/system/network` | 公开 | 局域网 IP 探测（自定义域名提示用），**已过滤虚拟网卡**，见下 |
-| GET | `/api/system/gif-encoder` | 公开 | GIF 编码器自检：`{ available, version, path, hint }`。「生成等几秒后报错」时第一个要看的就是它 |
+| GET | `/api/system/gif-encoder` | 公开 | GIF 编码器自检：`{ available, version, path, frameSync, hint }`。「生成等几秒后报错」时第一个要看的就是它；`frameSync` 是当前选中的帧同步写法（`-vsync 0` 或 `-fps_mode passthrough`） |
 
 > `/api/system/network` 只返回手机真能连上的地址。`NetworkInterface` 会把 Hyper-V 的
 > `vEthernet`、WSL、VMware、Docker 网桥、Clash/FlClash 的 TUN（常驻 `198.18.0.x`）统统列出来，
@@ -896,7 +934,7 @@ docker compose up -d --build
 |---|---|
 | 端到端联调（tasks 5.5） | ✅ 已完成。四个脚本共 **69 项断言**全绿（详见 §10.1），另有后端 14 个单元测试 |
 | CI | ✅ `.github/workflows/ci.yml`：后端打包 + 前端类型检查/构建 + 真实 MySQL 的端到端联调 |
-| 单元测试 / 组件测试 | ⚠️ 后端已有 **33 个**（`TokenBucketRateLimiterTest` 5 + `AuthInterceptorTest` 9 + `FfmpegCliSyncTest` 6 + `GifEncoderGuardTest` 2 + `GifOptionsTest` 6 + `QrAlphaExtractorTest` 3 + `GifRenderSmokeTest` 1，另有 `GifParamProbeTest` 调参探针常驻 `@Disabled`），`mvn test` 全绿（33 run / 1 skipped）；业务 Controller、前端 Jest/Playwright 仍为空白 |
+| 单元测试 / 组件测试 | ⚠️ 后端已有 **38 个**（`TokenBucketRateLimiterTest` 5 + `AuthInterceptorTest` 9 + `FfmpegCliSyncTest` 6 + `FfmpegCliExtractTest` 2 + `GifEncoderGuardTest` 2 + `GifOptionsTest` 6 + `QrAlphaExtractorTest` 3 + `QrCleanerTest` 3 + `GifRenderSmokeTest` 1，另有 `GifParamProbeTest` 调参探针常驻 `@Disabled`），`mvn test` 全绿（38 run / 1 skipped）；业务 Controller、前端 Jest/Playwright 仍为空白 |
 | GIF 导出测试覆盖 | ⚠️ 只有「默认参数端到端跑通」+ 参数夹取 / 白底反推 / 编码器前置检查。`tasks.md` 8.4~8.8（回退重试、订单幂等、失败不核销、帧一致性）**无自动化**，改回退逻辑必须人工验证。素材自 `GifTestImages` 现场合成，不再依赖仓库里的示例图 |
 | GIF 真机扫码 | ⚠️ `tasks.md` 8.10 未做：成品只在 ZXing 三档下验证通过，**没有用微信扫过真机** |
 | GIF 并发上限 | ⚠️ `Semaphore(2)` 是进程内常量。多实例部署时实际并发 = 实例数 × 2，而 ffmpeg 是 CPU 密集型，上量前按机器核数重定 |

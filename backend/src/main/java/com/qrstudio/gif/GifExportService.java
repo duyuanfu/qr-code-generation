@@ -362,31 +362,13 @@ public class GifExportService {
     // ------------------------------------------------------------------
 
     /**
-     * 解析 /uploads/xxx 到磁盘路径。
+     * 解析 /uploads/xxx 到磁盘路径（规则见 {@link UploadPath}）。
      *
      * <p>只接受一级文件名，挡住 {@code ../} 之类的路径穿越 —— 这个参数来自请求体，
      * 不校验的话用户可以读到服务器上任意可读文件。
      */
     private Path resolveUpload(String url, String label) {
-        if (url == null || url.isBlank()) {
-            throw new GifException(400, "请上传" + label);
-        }
-        String name;
-        if (url.startsWith("/uploads/")) {
-            name = url.substring("/uploads/".length());
-        } else if (!url.startsWith("http")) {
-            name = url;
-        } else {
-            throw new GifException(400, label + "需先上传到本站，不支持外链");
-        }
-        if (name.isEmpty() || name.contains("/") || name.contains("\\") || name.contains("..")) {
-            throw new GifException(400, label + "路径非法");
-        }
-        Path path = Path.of(uploadDirPath, name);
-        if (!Files.isRegularFile(path)) {
-            throw new GifException(400, label + "文件不存在，请重新上传");
-        }
-        return path;
+        return UploadPath.resolve(uploadDirPath, url, label);
     }
 
     /**

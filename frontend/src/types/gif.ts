@@ -56,6 +56,13 @@ export interface PrecheckResult {
   millis: number;
 }
 
+/** 「去掉中间图案」的结果：重绘后的新图地址 + 解出来的原始内容 */
+export interface CleanQrResult {
+  url: string;
+  content: string;
+  size: number;
+}
+
 export interface GifMeta {
   width: number;
   height: number;

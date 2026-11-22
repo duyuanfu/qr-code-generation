@@ -77,7 +77,9 @@ export const GifParamPanel: React.FC<Props> = ({ params, onChange }) => {
             maxLength={24}
             className="h-9 text-sm"
           />
-          <p className="text-[11px] text-slate-400">留空则不显示</p>
+          <p className="text-[11px] text-slate-400">
+            留空则不显示；字号与倒计时文字一致，太长时自动缩小以放得下
+          </p>
         </div>
       </section>
 
@@ -117,7 +119,7 @@ export const GifParamPanel: React.FC<Props> = ({ params, onChange }) => {
         />
         <Slider
           label="浓度"
-          hint="越低越融入底图，但过低会扫不出来"
+          hint="二维码墨色的不透明度：100% 和原图一样实，越低越透出底图。四角还会再乘一次「四角系数」"
           value={params.qrOpacity}
           min={0.2}
           max={1}

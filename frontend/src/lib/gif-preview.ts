@@ -31,10 +31,9 @@ interface TextLayer {
 }
 
 /** 800 基准下的字号与位置，与后端 FrameComposer 对齐 */
-const COUNTDOWN_FONT = 80;
-const CAPTION_FONT = 40;
+const TEXT_FONT = 80;
 const COUNTDOWN_POS = { x: 52, y: 46 };
-const CAPTION_POS = { x: 400, y: 40 };
+const CAPTION_POS = { x: 400, y: 40, marginX: 52 };
 
 export function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -116,6 +115,22 @@ function clamp255(v: number): number {
   return Math.max(0, Math.min(255, Math.round(v)));
 }
 
+function textFont(fontSize: number): string {
+  return `700 ${fontSize}px "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif`;
+}
+
+/**
+ * 字号适配：说明文字与倒计时同号（TEXT_FONT），只有真的放不下时才按比例缩小。
+ * 24 个汉字 × 80px 比 800 的画布还宽，不缩就会溢出。规则与后端 FrameComposer 一致。
+ */
+function fitFontSize(text: string, fontSize: number, maxWidth: number, strokeWidth: number): number {
+  const ctx = createCanvas(8, 8).getContext('2d')!;
+  ctx.font = textFont(fontSize);
+  const width = ctx.measureText(text).width + strokeWidth * 2;
+  if (width <= maxWidth || width <= 0) return fontSize;
+  return Math.max(12, (fontSize * maxWidth) / width);
+}
+
 /** 文字层：描边 + 可选投影，返回基线与画布，供锚点对齐 */
 function makeTextLayer(
   text: string,
@@ -123,7 +138,7 @@ function makeTextLayer(
   strokeWidth: number,
   withShadow: boolean
 ): TextLayer {
-  const font = `700 ${fontSize}px "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif`;
+  const font = textFont(fontSize);
   const measure = createCanvas(8, 8);
   const mctx = measure.getContext('2d')!;
   mctx.font = font;
@@ -271,15 +286,23 @@ export function buildPreviewAssets(
     lctx.drawImage(haloWork, -margin, -margin);
   }
 
+  const hasCaption = params.caption.trim().length > 0;
+  const captionStroke = Math.max(2, 5 * meter.scale);
+  const captionFont = hasCaption
+    ? fitFontSize(
+        params.caption,
+        TEXT_FONT * meter.scale,
+        size - 2 * CAPTION_POS.marginX * meter.scale,
+        captionStroke
+      )
+    : 0;
+
   return {
     size,
     base,
     qrLayer,
     countdown: new Map(),
-    caption:
-      params.caption.trim().length > 0
-        ? makeTextLayer(params.caption, CAPTION_FONT * meter.scale, Math.max(2, 5 * meter.scale), false)
-        : null,
+    caption: hasCaption ? makeTextLayer(params.caption, captionFont, captionStroke, false) : null,
     supportsFilter,
   };
 }
@@ -289,7 +312,7 @@ function countdownLayer(assets: PreviewAssets, text: string, params: GifParams):
   const cached = assets.countdown.get(text);
   if (cached) return cached;
   const s = params.outputSize / 800;
-  const layer = makeTextLayer(text, COUNTDOWN_FONT * s, Math.max(2, 5 * s), true);
+  const layer = makeTextLayer(text, TEXT_FONT * s, Math.max(2, 5 * s), true);
   assets.countdown.set(text, layer);
   return layer;
 }

@@ -124,7 +124,7 @@ http://localhost:3001
 
 > 公共实例怎么搭：见《Docker 多服务共享 MySQL 部署与接入通用指南》第二节（`/opt/shared-infra/mysql`）。
 > **本项目已有历史数据、原来用的是自带 MySQL 容器**：不要删库重建，按
-> [`docs/migrate-to-shared-mysql.md`](docs/migrate-to-shared-mysql.md) 无损迁移（导出 → 建库建号 → 导入校验 → 切流 → 清理，全程可回滚）。
+> [`docs/migrate-to-shared-mysql.md`](docs/migrate-to-shared-mysql.md) 一条命令迁移（停写 → 导出 → 建库建号 → 导入校验 → 起新栈，全程可回滚）。
 
 ### 1. 克隆代码到服务器
 
@@ -143,7 +143,7 @@ cp .env.example .env
 ```ini
 APP_PORT=3001                 # 前端对外端口
 
-# 共享 MySQL：库与账号由运维在 shared-mysql 上分配
+# 共享 MySQL：库与账号不需要外部分配，首次迁移时由脚本在 shared-mysql 上创建
 DB_HOST=shared-mysql          # 容器名即主机名（走 shared-net 内部 DNS）
 DB_PORT=3306
 DB_NAME=qr_studio

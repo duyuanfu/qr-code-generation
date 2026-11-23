@@ -966,19 +966,19 @@ docker compose up -d --build
   而且报错位置离「库没建」很远，很难查。这个参数只留在 `application-dev.yml`。
 - **账号必须是 `'user'@'%'`**：容器间走网桥，来源 IP 是 `172.x.x.x` 而不是环回，写成 `@'localhost'` 会 `Access denied`。
 
-**已有历史数据的迁移**（原来用自带 `qr-studio-mysql` 的）：按指南第四节的无损流程走，
-本项目把它落成了可执行脚本，步骤与回滚见 `docs/migrate-to-shared-mysql.md`：
+**已有历史数据的迁移**（原来用自带 `qr-studio-mysql` 的）：按指南第四节走，
+本项目落成了一行命令，步骤与回滚见 `docs/migrate-to-shared-mysql.md`：
 
 ```bash
-OLD_ROOT_PASSWORD='旧口令' SHARED_ROOT_PASSWORD='共享口令' \
-  ./scripts/migrate-to-shared-mysql.sh prepare   # 导数据 + 建库建号 + 导入 + 行数比对（线上无感）
-OLD_ROOT_PASSWORD='旧口令' SHARED_ROOT_PASSWORD='共享口令' \
-  ./scripts/migrate-to-shared-mysql.sh switch    # 停写 → 补增量 → 严格校验 → 起新栈 → 冒烟
+# .env 里填好 DB_* 五项与 MYSQL_ROOT_PASSWORD（旧容器口令）
+SHARED_ROOT_PASSWORD='共享实例 root 口令' ./scripts/migrate-to-shared-mysql.sh
+#   停写 → 导旧库 → 建库建号 → 导入 → 精确 COUNT(*) 比对 → 起新栈 → 冒烟
 ```
 
-> 比指南多做了一步「切流前再导一次」：指南是先导后切，中间那段窗口里的写入会丢。
-> 这是付费业务（订单、活码），丢一条订单就是一次纠纷，所以停写后再补一次全量导入。
+> 只有一处与指南不同：**先停写再导出**（指南是先导后切）。中间那几秒的写入会丢，
+> 而这是付费业务（订单、活码），丢一条就是纠纷；停写窗口因此从「几乎为零」变成「一次导出 + 导入」，仍是秒级。
 > 行数校验也没用指南里的 `information_schema.table_rows` —— 那是估算值，会制造假警报，脚本用精确 `COUNT(*)`。
+> 库名/账号不需要外部分配，脚本自己建（默认 `qr_studio` / `qr_studio_user@'%'`），换名字只改 `.env`。
 
 > ⚠️ 若后端启动后监听的**不是 8080**，先查环境变量：Spring 的宽松绑定会把 `SERVER__PORT` / `SERVER_PORT` 也当成 `server.port`。某些 IDE / Agent 沙箱会注入这类变量，命令行参数 `--server.port=8080` 优先级最高，可强制覆盖。
 

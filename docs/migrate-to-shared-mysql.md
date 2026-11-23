@@ -11,56 +11,69 @@
 | 网络 | 项目默认网络 | 额外加入 `shared-net`（容器名即主机名） |
 | 内存 | 单实例 InnoDB 缓冲池独占 | 与其他业务共享一个缓冲池（`256M` 起步） |
 
-本文是按《Docker 多服务共享 MySQL 部署与接入通用指南》**第四节（既有服务无损平滑迁移）**写的落地版，
-所有步骤都可以照抄执行。已有历史数据时**不要**直接删库重建 —— 走这里的流程，全程可回滚。
+本文是《Docker 多服务共享 MySQL 部署与接入通用指南》**第四节（既有服务无损平滑迁移）**的落地版。
+已有历史数据时**不要**删库重建，照着走一遍，一条命令搞定，全程可回滚。
 
 > 前提：宿主机上已经按指南第二节搭好 `/opt/shared-infra/mysql`，且 `shared-mysql` 正在运行。
 > 检查：`docker ps --filter name=shared-mysql` 与 `docker network inspect shared-net`。
 
 ---
 
-## 0. 先把新代码拉下来
+## 1. 准备
 
 ```bash
 cd /path/to/qr-code-generation
-git pull            # 拿到改成 shared-net 的 docker-compose.yml 与新 .env 模板
+git pull                       # 拿到改成 shared-net 的 docker-compose.yml 与新配置模板
+cp .env.example .env           # 若已有 .env，只补 DB_* 五项
 ```
 
-此时**先不要** `docker compose up -d` —— 新的编排连的是新库，而新库还是空的。
-老栈继续用旧编排跑着，接下来分两段做。
+`.env` 里跟这次迁移有关的部分：
 
----
+```ini
+DB_HOST=shared-mysql
+DB_PORT=3306
+DB_NAME=qr_studio
+DB_USER=qr_studio_user
+DB_PASSWORD=本库专用账号的强口令
 
-## 1~3. 导出 → 建库建账号 → 导入（线上无感）
-
-一条命令跑完，等价于指南第四节步骤 1-3：
-
-```bash
-# 迁移那一次才需要旧库口令，临时给就行
-OLD_ROOT_PASSWORD='旧容器的 root 口令' \
-SHARED_ROOT_PASSWORD='shared-mysql 的 root 口令' \
-./scripts/migrate-to-shared-mysql.sh prepare
+# 仅迁移那一次需要
+OLD_MYSQL_CONTAINER=qr-studio-mysql
+MYSQL_ROOT_PASSWORD=旧容器的 root 口令
 ```
 
-脚本做的事：
+**库名和账号不用等谁分配**：指南第四节步骤 2 就是用共享实例的 root 现建，
+脚本会按上面的 `DB_NAME` / `DB_USER` 建好并只授权本库。想换名字改这两行即可。
 
-1. `mysqldump --single-transaction --quick --no-tablespaces --set-gtid-purged=OFF`
-   从旧容器导出到 `./backup/qr_studio_online_<时间>.sql`（一致性快照，不锁表、不影响线上）；
-2. 在 `shared-mysql` 上建 `qr_studio` 库、建 `qr_studio_user@'%'` 账号并只授权本库；
-3. 导入，然后**逐表精确 `COUNT(*)` 比对**新旧库。
-
-> 为什么不用指南里的 `information_schema.table_rows`：那是 InnoDB 的估算值，
-> 同一份数据前后查两次都可能不一样，拿它做迁移校验只会制造假警报。脚本用的是真 `COUNT(*)`。
-
-prepare 阶段线上还在写，所以两边行数**允许**有差异（脚本会打印差异但不中止），
-切流时会再比一次，那一次是严格的。
-
-手工等价命令（不想用脚本时）：
+## 2. 一条命令迁移
 
 ```bash
+SHARED_ROOT_PASSWORD='shared-mysql 的 root 口令' ./scripts/migrate-to-shared-mysql.sh
+```
+
+脚本按指南第四节的五步依次执行：
+
+| 步骤 | 动作 | 说明 |
+|---|---|---|
+| 1 | `docker compose stop backend frontend` | 停写，**唯一停机窗口**，本项目量级是秒级 |
+| 2 | `mysqldump --single-transaction --quick --no-tablespaces --set-gtid-purged=OFF` | 导到 `./backup/qr_studio_<时间>.sql` |
+| 3 | `CREATE DATABASE` + `CREATE USER 'qr_studio_user'@'%'` + `GRANT ... ON qr_studio.*` | 在 `shared-mysql` 上建 |
+| 4 | 导入，然后**逐表精确 `COUNT(*)` 比对** | 不一致直接中止，不删任何东西 |
+| 5 | `docker compose up -d` + 轮询 `/api/payment/config` | 新编排连 `shared-mysql:3306`，起来即冒烟 |
+
+> 为什么先停再导：指南是「先导、后切」，中间隔的那几秒里的写入会丢。本项目是付费业务
+> （订单、活码），丢一条就是纠纷，所以把停写放在导出之前，只多花几秒。
+>
+> 为什么不用指南里的 `information_schema.table_rows`：那是 InnoDB 估算值，同一份数据
+> 前后查两次都可能不同，拿它做校验只会误报。脚本用的是真 `COUNT(*)`。
+
+不想用脚本时，四步手工等价命令：
+
+```bash
+docker compose stop backend frontend
+
 docker exec -i qr-studio-mysql mysqldump -uroot -p'旧口令' \
   --default-character-set=utf8mb4 --single-transaction --quick \
-  --no-tablespaces --set-gtid-purged=OFF qr_studio > backup/qr_studio_online.sql
+  --no-tablespaces --set-gtid-purged=OFF qr_studio > backup/qr_studio.sql
 
 docker exec -i shared-mysql mysql -uroot -p'共享口令' <<'SQL'
 CREATE DATABASE IF NOT EXISTS qr_studio DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -69,44 +82,13 @@ GRANT ALL PRIVILEGES ON qr_studio.* TO 'qr_studio_user'@'%';
 FLUSH PRIVILEGES;
 SQL
 
-docker exec -i shared-mysql mysql -uroot -p'共享口令' qr_studio < backup/qr_studio_online.sql
+docker exec -i shared-mysql mysql -uroot -p'共享口令' qr_studio < backup/qr_studio.sql
+docker compose up -d
 ```
 
----
+想复核行数：`./scripts/migrate-to-shared-mysql.sh verify`（旧容器还在跑时才有意义）。
 
-## 4. 切流（有几秒停写）
-
-先把 `.env` 里的共享实例五项填好：
-
-```ini
-DB_HOST=shared-mysql
-DB_PORT=3306
-DB_NAME=qr_studio
-DB_USER=qr_studio_user
-DB_PASSWORD=强口令
-```
-
-然后：
-
-```bash
-OLD_ROOT_PASSWORD='旧口令' SHARED_ROOT_PASSWORD='共享口令' \
-./scripts/migrate-to-shared-mysql.sh switch
-```
-
-`switch` 的实际动作，对应指南步骤 4：
-
-1. `docker compose stop backend frontend` —— 停写，这是唯一的停机窗口；
-2. **再导一次**并导入 —— 把 prepare 之后新产生的数据补过去（本项目量级是秒级）；
-3. 严格比对行数，不一致直接中止，**不删任何东西**；
-4. `docker compose up -d` —— 新编排把 backend 挂到 `shared-net`，连 `shared-mysql:3306`；
-5. 冒烟：轮询 `http://127.0.0.1:${APP_PORT}/api/payment/config` 直到 200。
-
-> 为什么比指南多做一次「补导」：指南的写法是先导、后切，中间隔的这段时间里的写入会丢。
-> 本项目是付费业务（订单、活码），丢一条订单就是一次纠纷，所以切流前停写再导一遍。
-
----
-
-## 5. 观察与清理
+## 3. 观察与清理
 
 - 观察 **24~48 小时**：管理员能登录、活码落地页能打开、下单/核销正常、`/gif` 能出图；
 - 确认无误后释放资源：
@@ -138,7 +120,7 @@ docker volume rm <旧卷名>             # 确认无误再删
 |---|---|---|
 | `UnknownHostException: shared-mysql` | backend 没加入 `shared-net`，或实例名拼错 | `docker network inspect shared-net`，确认 `shared-mysql` 与 `qr-studio-backend` 都在 `Containers` 里 |
 | `Access denied for user 'qr_studio_user'@'172.x.x.x'` | 授权写成了 `'user'@'localhost'`，或口令不符 | 必须 `'user'@'%'`：容器间走网桥，来源 IP 是 `172.x`，不是环回 |
-| 启动报 `Access denied ... to database` / `Unknown database` | 库还没建，或账号没授权 | 重跑 `prepare` 的建库建号段；账号必须 `GRANT ALL ON qr_studio.*` |
+| 启动报 `Access denied ... to database` / `Unknown database` | 库还没建，或账号没授权 | 重跑脚本（建库建号是幂等的）；账号必须 `GRANT ALL ON qr_studio.*` |
 | 启动报 `CREATE DATABASE ... denied` | 生产配置里还挂着 `createDatabaseIfNotExist=true` | 该参数只在 `application-dev.yml` 里保留，生产 URL 不带它 |
 | `Too many connections` | 多个业务共用 `max_connections=120` | 后端 Hikari 单实例 15，够用；别为了「快」把它调大 |
 | 时间差 8 小时 | 容器时区或共享实例 `default-time-zone` 不一致 | 两边都应是 `Asia/Shanghai` / `+08:00` |
@@ -148,7 +130,7 @@ docker volume rm <旧卷名>             # 确认无误再删
 | 文件 | 改了什么 |
 |---|---|
 | `docker-compose.yml` | 删掉 `mysql` 服务与 `mysql-data` 卷；backend 加 `networks: [default, shared-net]`；数据库参数改成 `DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD` |
-| `backend/src/main/resources/application.yml` | JDBC 串按上面五个变量拼装；去掉 `createDatabaseIfNotExist`（共享实例上没有建库权限） |
+| `backend/src/main/resources/application.yml` | JDBC 串按上面五个变量拼装；去掉 `createDatabaseIfNotExist`（共享实例上专用账号没有建库权限） |
 | `backend/src/main/resources/application-dev.yml` | 本地开发的 URL（含 `createDatabaseIfNotExist`）只放在 dev profile |
 | `.env.example` | `MYSQL_ROOT_PASSWORD` → `DB_*` 五项；旧容器变量仅在迁移期需要 |
-| `scripts/migrate-to-shared-mysql.sh` | 上面四步的自动化：`prepare` / `switch` / `verify` / `rollback` |
+| `scripts/migrate-to-shared-mysql.sh` | 迁移自动化：默认一条命令走完五步，另有 `verify` / `rollback` |

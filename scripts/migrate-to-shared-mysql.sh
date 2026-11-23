@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# 把本项目从「自带 MySQL 容器」迁移到宿主机上的共享实例 shared-mysql。
+# 把本项目从「自带 MySQL 容器」迁到宿主机上的共享实例 shared-mysql。
 #
-# 对应《Docker 多服务共享 MySQL 部署与接入通用指南》第四节（既有服务无损平滑迁移），
-# 逐步命令见 docs/migrate-to-shared-mysql.md。
+# 对应《Docker 多服务共享 MySQL 部署与接入通用指南》第四节，一条命令走完五步：
+#   停写 → 导出旧库 → 共享实例建库建号 → 导入 → 行数校验 → 起新栈 → 冒烟
 #
-#   ./scripts/migrate-to-shared-mysql.sh prepare   步骤 1-3：导出 + 建库建号 + 导入 + 行数比对（线上无感）
-#   ./scripts/migrate-to-shared-mysql.sh switch    步骤 4：停旧栈 → 补一次增量 → 起新栈 → 冒烟
-#   ./scripts/migrate-to-shared-mysql.sh verify    随时复核新旧两库的行数（旧容器还在跑时才有意义）
-#   ./scripts/migrate-to-shared-mysql.sh rollback  打印回滚步骤（只打印，不执行）
+#   ./scripts/migrate-to-shared-mysql.sh            迁移（唯一停服窗口，秒级）
+#   ./scripts/migrate-to-shared-mysql.sh verify     只比对新旧两库行数（旧容器还在跑时）
+#   ./scripts/migrate-to-shared-mysql.sh rollback   打印回滚步骤（只打印，不执行）
 #
 # 设计取舍：
 #   - 所有命令都走 `docker exec -i`，宿主机不需要装 mysql 客户端；
-#   - 导出用 --single-transaction（InnoDB 一致性快照，不锁表、不影响线上）；
-#   - 行数比对用精确 COUNT(*)，不用 information_schema.table_rows（后者是估算值，
-#     差一两个数量级都可能，用它做校验只会误报）；
-#   - 唯一会「停服务」的只有 switch，且停写窗口 = 一次全量导出 + 导入（本项目量级是秒级）。
+#   - 导出用 --single-transaction（InnoDB 一致性快照，不锁表）；
+#   - 先停后导：本项目是付费业务（订单、活码），先导后切会丢掉中间那几秒的写入；
+#     停写窗口 = 一次导出 + 导入，本项目量级是秒级；
+#   - 行数校验用精确 COUNT(*)，不用 information_schema.table_rows（后者是估算值，
+#     同一份数据查两次都可能不同，拿它做校验只会误报）。
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
@@ -44,9 +44,20 @@ BACKUP_DIR="${BACKUP_DIR:-$PWD/backup}"
 APP_PORT="${APP_PORT:-3001}"
 STAMP="$(date +%Y%m%d_%H%M%S)"
 
+STOPPED=0
+DONE=0
+on_exit() {
+  local code=$?
+  if [[ $code -ne 0 && $STOPPED -eq 1 && $DONE -eq 0 ]]; then
+    warn "迁移中断，但旧容器 $OLD_CONTAINER 与旧数据卷都没碰过，数据还在。"
+    warn "要让网站先恢复，按 ./scripts/migrate-to-shared-mysql.sh rollback 的步骤退回旧编排。"
+  fi
+}
+trap on_exit EXIT
+
 need() {
   local name="$1"
-  [[ -n "${!name:-}" ]] || die "缺少 $name：写进 .env，或本命令前置（例如 DB_PASSWORD=xxx $0 prepare）"
+  [[ -n "${!name:-}" ]] || die "缺少 $name：写进 .env，或本命令前置（例如 DB_PASSWORD=xxx $0）"
 }
 
 # 口令会拼进 SQL 语句，带引号/反斜杠会直接把语句弄坏，提前拦住
@@ -64,7 +75,7 @@ preflight() {
   command -v docker >/dev/null || die "本机没有 docker"
 
   running "$OLD_CONTAINER" \
-    || die "旧容器 $OLD_CONTAINER 未运行。已经迁完并停掉旧容器的话，就不需要再跑 prepare/verify 了"
+    || die "旧容器 $OLD_CONTAINER 未运行。已经迁完并停掉旧容器的话，就不用再跑本脚本了"
   running "$SHARED_CONTAINER" \
     || die "共享实例 $SHARED_CONTAINER 未运行：cd /opt/shared-infra/mysql && docker compose up -d"
 
@@ -73,6 +84,16 @@ preflight() {
 
   need OLD_ROOT_PASSWORD
   need SHARED_ROOT_PASSWORD
+}
+
+require_new_compose() {
+  grep -q 'shared-net' docker-compose.yml \
+    || die "docker-compose.yml 还是旧版（没有 shared-net）。先 git pull 拿到本次改造的编排文件"
+  need DB_USER
+  need DB_PASSWORD
+  need JWT_SECRET
+  need ADMIN_PASSWORD
+  check_sql_literal "$DB_PASSWORD" DB_PASSWORD
 }
 
 dump_old() {
@@ -138,7 +159,6 @@ table_counts() {
 }
 
 compare_counts() {
-  local strict="$1"
   local old new
   old=$(table_counts "$OLD_CONTAINER" "$OLD_ROOT_PASSWORD" "$OLD_DB_NAME")
   new=$(table_counts "$SHARED_CONTAINER" "$SHARED_ROOT_PASSWORD" "$DB_NAME")
@@ -151,21 +171,7 @@ compare_counts() {
 
   warn "行数不一致（左=旧库 $OLD_DB_NAME，右=新库 $DB_NAME）："
   diff -u <(printf '%s\n' "$old") <(printf '%s\n' "$new") | sed 's/^/    /' || true
-
-  if [[ "$strict" == "strict" ]]; then
-    die "切流后校验失败：新库数据与旧库不符，先别删任何东西，按 rollback 处理"
-  fi
-  warn "线上仍有写入，这个差异通常只是导出之后的新数据；switch 阶段停写后会再比一次"
-}
-
-require_new_compose() {
-  grep -q 'shared-net' docker-compose.yml \
-    || die "docker-compose.yml 还是旧版（没有 shared-net）。先 git pull 拿到本次改造的编排文件"
-  need DB_USER
-  need DB_PASSWORD
-  need JWT_SECRET
-  need ADMIN_PASSWORD
-  check_sql_literal "$DB_PASSWORD" DB_PASSWORD
+  die "新库数据与旧库不符，先别删任何东西，按 rollback 处理"
 }
 
 smoke() {
@@ -183,56 +189,49 @@ smoke() {
 }
 
 # ---------- 子命令 ----------
-cmd_prepare() {
-  preflight
-  need DB_PASSWORD
-  check_sql_literal "$DB_PASSWORD" DB_PASSWORD
-
-  local dump="$BACKUP_DIR/${DB_NAME}_online_${STAMP}.sql"
-  dump_old "$dump"
-  create_schema_and_user
-  import_shared "$dump"
-  compare_counts lenient
-
-  echo
-  info "步骤 1-3 完成（线上未受影响）"
-  echo "  备份文件：$dump"
-  echo "  下一步（会有几秒停写）：./scripts/migrate-to-shared-mysql.sh switch"
-}
-
-cmd_switch() {
+cmd_migrate() {
   require_new_compose
   preflight
   command -v curl >/dev/null || die "本机没有 curl，冒烟步骤没法跑"
 
-  info "停写：docker compose stop backend frontend"
+  info "步骤 1/5 停写（唯一停服窗口，秒级）：docker compose stop backend frontend"
+  STOPPED=1
   docker compose stop backend frontend || warn "stop 没成功（可能已经停了），继续"
 
-  local dump="$BACKUP_DIR/${DB_NAME}_switch_${STAMP}.sql"
+  info "步骤 2/5 导出旧库"
+  local dump="$BACKUP_DIR/${DB_NAME}_${STAMP}.sql"
   dump_old "$dump"
-  create_schema_and_user
-  import_shared "$dump"
-  compare_counts strict
 
-  info "切换到共享实例：docker compose up -d"
+  info "步骤 3/5 建库建号"
+  create_schema_and_user
+
+  info "步骤 4/5 导入并逐表校验行数"
+  import_shared "$dump"
+  compare_counts
+
+  info "步骤 5/5 起新栈：docker compose up -d"
   docker compose up -d
   smoke
+  DONE=1
 
   echo
-  info "切流完成，数据在新库上跑着"
+  info "迁移完成，数据已经在 $SHARED_CONTAINER/$DB_NAME 上跑着"
   cat <<EOF
-  旧容器仍在运行（保留回滚能力），新写入已全部落在 $SHARED_CONTAINER。
-  观察 24~48 小时、确认业务与数据都对，再释放内存和磁盘：
-      docker stop $OLD_CONTAINER          # 先停，数据卷还在，随时能起回来
-      docker volume ls | grep mysql       # 确认旧卷名
-      docker volume rm <旧卷名>            # 确认无误后再删，删了就没退路
-  迁移期间的两份备份在 $BACKUP_DIR/，建议留到观察期结束。
+  备份：$dump
+  旧容器 $OLD_CONTAINER 和旧数据卷都还在（只是没起），这就是回滚的退路。
+
+  观察 24~48 小时：管理员能登录、活码落地页能开、下单核销正常、/gif 能出图。
+  确认无误后再释放内存与磁盘：
+      docker stop $OLD_CONTAINER           # 先停（数据卷还在，随时能起回来）
+      docker volume ls | grep mysql        # 找到旧卷名，通常是 qr-code-generation_mysql-data
+      docker volume rm <旧卷名>             # 确认无误再删，删了就没退路
+  观察期内别删 backup/ —— 里面有用户邮箱与口令哈希，也不要提交到仓库。
 EOF
 }
 
 cmd_verify() {
   preflight
-  compare_counts lenient
+  compare_counts
 }
 
 cmd_rollback() {
@@ -242,9 +241,9 @@ cmd_rollback() {
   1) 停新栈，避免继续往共享库写：
        docker compose stop backend frontend
 
-  2) 把编排与 .env 退回旧版（旧版自带 mysql 服务、连的是 $OLD_CONTAINER）：
+  2) 把编排退回改造前那一版（旧版自带 mysql 服务、连的是 $OLD_CONTAINER）：
        git log --oneline -- docker-compose.yml     # 找到改造前那个提交
-       git checkout <改造前的提交> -- docker-compose.yml
+       git show <改造前提交>:docker-compose.yml > docker-compose.yml
        # .env 里 DB_* 五项留着不碍事，但要保证 MYSQL_ROOT_PASSWORD 已填
 
   3) 起回来（旧数据卷没动过，起来就是切流前的状态）：
@@ -258,13 +257,12 @@ cmd_rollback() {
 EOF
 }
 
-case "${1:-}" in
-prepare) cmd_prepare ;;
-switch) cmd_switch ;;
+case "${1:-migrate}" in
+migrate) cmd_migrate ;;
 verify) cmd_verify ;;
 rollback) cmd_rollback ;;
 *)
-  sed -n '8,11p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '8,10p' "$0" | sed 's/^# \{0,1\}//'
   exit 1
   ;;
 esac

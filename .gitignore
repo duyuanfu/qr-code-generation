@@ -50,3 +50,9 @@ Thumbs.db
 
 # AI 编码助手工作记忆（按人/按会话产生，不入库；长期结论请写进 AGENT.md）
 .workbuddy/
+
+# 数据库迁移备份（含用户邮箱与口令哈希，绝不入库）
+# 只忽略仓库根的 dump，别写成 *.sql —— 那会把 backend/src/main/resources/schema.sql 一起遮住
+/backup/
+/*.sql
+/*.sql.gz

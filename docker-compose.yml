@@ -1,24 +1,4 @@
 services:
-  mysql:
-    image: mysql:8.0
-    container_name: qr-studio-mysql
-    restart: unless-stopped
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请在 .env 中设置 MYSQL_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-qr_studio}
-      TZ: Asia/Shanghai
-    command:
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
-    volumes:
-      - mysql-data:/var/lib/mysql
-    healthcheck:
-      test: ['CMD-SHELL', 'mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent']
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 30s
-
   backend:
     build:
       context: ./backend
@@ -27,13 +7,17 @@ services:
         APT_MIRROR: ${APT_MIRROR-mirrors.aliyun.com}
     container_name: qr-studio-backend
     restart: unless-stopped
-    depends_on:
-      mysql:
-        condition: service_healthy
     environment:
-      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-qr_studio}?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
-      SPRING_DATASOURCE_USERNAME: root
-      SPRING_DATASOURCE_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请在 .env 中设置 MYSQL_ROOT_PASSWORD}
+      # ===== 共享 MySQL =====
+      # 宿主机上由 /opt/shared-infra 统一维护的 shared-mysql 容器（见 docs/migrate-to-shared-mysql.md）。
+      # 主机名直接写容器名，走 shared-net 内部 DNS，3306 不暴露到公网。
+      # 连接串由后端按这五个变量拼装（application.yml），换实例只改 .env，不用动代码。
+      DB_HOST: ${DB_HOST:-shared-mysql}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_NAME: ${DB_NAME:-qr_studio}
+      # 专用账号，只有本库权限；别再用 root —— 共享实例上 root 是其他业务的命脉
+      DB_USER: ${DB_USER:?请在 .env 中设置 DB_USER（共享实例上为本项目分配的账号）}
+      DB_PASSWORD: ${DB_PASSWORD:?请在 .env 中设置 DB_PASSWORD}
       # 上传目录与建表：schema.sql 在每次启动时幂等执行
       APP_UPLOAD_DIR: /app/data/uploads
       # 以下三项没有默认值：漏配时容器直接起不来，而不是带着开发口令上线
@@ -46,6 +30,10 @@ services:
     volumes:
       # 与本地开发保持一致：后端把上传文件写在自身目录下的 data/uploads
       - ./backend/data/uploads:/app/data/uploads
+    networks:
+      # 既要在本项目默认网络里被 frontend 访问，又要进 shared-net 才能连上 shared-mysql
+      - default
+      - shared-net
 
   frontend:
     build:
@@ -62,5 +50,11 @@ services:
       # 宿主机映射端口：可通过 .env 中的 APP_PORT 自定义（默认 3001，避免与 3000/8080 冲突）
       - '${APP_PORT:-3001}:3001'
 
-volumes:
-  mysql-data:
+networks:
+  # 显式声明默认网络：backend 的 networks 里写了 default，由它承载 frontend → backend:8080
+  default:
+  # 由宿主机一次性创建：docker network create shared-net
+  # 共享实例（shared-mysql）与所有接入方都挂在这张网里，容器名即主机名。
+  # 写成 external: true 表示「不由本项目创建/销毁」，compose down 不会把它删掉。
+  shared-net:
+    external: true

@@ -81,9 +81,13 @@ jobs:
           --health-timeout=5s
           --health-retries=30
     env:
-      SPRING_DATASOURCE_URL: jdbc:mysql://127.0.0.1:3306/qr_studio?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
-      SPRING_DATASOURCE_USERNAME: root
-      SPRING_DATASOURCE_PASSWORD: ci_root_pw
+      # 用与生产完全相同的五个变量（application.yml 按它们拼 JDBC 串），
+      # 这样「连不上库」这类问题在 CI 就能暴露，而不是等上线。
+      # CI 的 MySQL service 直接把 3306 映射到 runner 本机，所以 DB_HOST 是 127.0.0.1。
+      DB_HOST: 127.0.0.1
+      DB_PORT: '3306'
+      DB_NAME: qr_studio
+      DB_USER: root
       # application.yml 只认 DB_PASSWORD，不再有回退值；本地/容器/CI 都必须显式给
       DB_PASSWORD: ci_root_pw
       # 以下三项只在 CI 里生效，与生产无关

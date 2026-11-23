@@ -1,0 +1,9 @@
+# 部署脚本要在 Linux 上执行：CRLF 会把 shebang 变成 `#!/usr/bin/env bash\r`，
+# 报「bad interpreter: No such file or directory」，且看不出是换行问题。
+*.sh text eol=lf
+
+# 其余文本文件保持仓库统一换行（Windows 侧 core.autocrlf=true 时仍按 LF 入库）
+*.yml   text
+*.yaml  text
+*.md    text
+*.json  text

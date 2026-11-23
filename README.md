@@ -97,7 +97,9 @@
 #    自检地址：GET /api/system/gif-encoder
 ffmpeg -version
 
-# 1. 数据库：准备一个 MySQL 8，库名 qr_studio（JDBC 串已带 createDatabaseIfNotExist）
+# 1. 数据库：准备一个 MySQL 8（本地自用即可，不需要预建库）
+#    dev profile 的 JDBC 串带 createDatabaseIfNotExist，会自动建 qr_studio 库；
+#    生产/容器环境没有建库权限，库由运维预建，见「服务器生产部署指南」
 
 # 2. 启动后端（:8080，启动时自动建表并种入默认管理员）
 #    dev profile 提供本地口令与模拟支付开关，生产环境不要启用
@@ -114,7 +116,15 @@ http://localhost:3001
 
 ## 🐳 服务器生产部署指南（Docker）
 
-针对**服务器上已有其他业务/容器**的环境，本项目通过 `docker-compose.yml` 编排 **MySQL + 后端 + 前端** 三个服务，只对外暴露前端端口，不抢占 80/443。
+本项目通过 `docker-compose.yml` 编排 **后端 + 前端** 两个服务，只对外暴露前端端口，不抢占 80/443。
+
+**数据库不随项目起容器**：连宿主机上统一维护的公共实例 `shared-mysql`（同一台机器上的多个业务共用一个 MySQL，
+避免每个项目各养一个实例把内存吃干）。库名 `qr_studio`、专用账号 `qr_studio_user`，
+通过 `shared-net` 这个 Docker 网络按容器名互相访问，3306 不暴露到公网。
+
+> 公共实例怎么搭：见《Docker 多服务共享 MySQL 部署与接入通用指南》第二节（`/opt/shared-infra/mysql`）。
+> **本项目已有历史数据、原来用的是自带 MySQL 容器**：不要删库重建，按
+> [`docs/migrate-to-shared-mysql.md`](docs/migrate-to-shared-mysql.md) 无损迁移（导出 → 建库建号 → 导入校验 → 切流 → 清理，全程可回滚）。
 
 ### 1. 克隆代码到服务器
 
@@ -129,11 +139,17 @@ cd qr-code-generation
 ```bash
 cp .env.example .env
 ```
-按需修改 `.env`（**以下三项必填，留空则容器无法启动**）：
+按需修改 `.env`（**以下必填，留空则容器无法启动**）：
 ```ini
 APP_PORT=3001                 # 前端对外端口
-MYSQL_ROOT_PASSWORD=change-me # 数据库口令，建议随机生成
-MYSQL_DATABASE=qr_studio
+
+# 共享 MySQL：库与账号由运维在 shared-mysql 上分配
+DB_HOST=shared-mysql          # 容器名即主机名（走 shared-net 内部 DNS）
+DB_PORT=3306
+DB_NAME=qr_studio
+DB_USER=qr_studio_user
+DB_PASSWORD=                  # 本库专用账号口令，别用共享实例的 root
+
 JWT_SECRET=                   # 至少 32 字节，生成：openssl rand -base64 48
 ADMIN_EMAIL=admin@example.com
 ADMIN_PASSWORD=               # 首次启动种子化的管理员口令
@@ -151,10 +167,16 @@ NEXT_PUBLIC_BRAND_URL=http://qr.trythis.pw/   # 扫码落地页品牌链接
 ### 3. 一键启动 Docker 容器
 
 ```bash
+# 共享网络由宿主机一次性创建（若已存在会报错，忽略即可）
+docker network create shared-net
+
 docker compose up -d --build
 ```
-> - MySQL 数据保存在命名卷 `mysql-data`，上传的文件挂载到宿主机 `./backend/data/uploads`。
-> - 后端容器 `depends_on` MySQL 的健康检查，表结构由 `schema.sql` 在启动时幂等创建。
+> - **不再有 `mysql` 服务和 `mysql-data` 卷**：数据在 `shared-mysql` 里，备份也由那边统一做
+>   （指南第五节：每日 3:30 全库 dump）。上传的文件仍然挂载到宿主机 `./backend/data/uploads`。
+> - backend 同时接入项目默认网络与 `shared-net`：前者供 frontend 访问 `backend:8080`，后者用于连库。
+> - 表结构由 `schema.sql` 在启动时幂等创建（`CREATE TABLE IF NOT EXISTS` + `INSERT IGNORE`），
+>   迁移过来的库上重复执行也不会改动已有数据。
 > - 前端镜像构建时通过 `ARG BACKEND_URL` 写入代理目标（rewrites 在构建期固化，运行时改环境变量无效）。
 > - **后端镜像底座为 `eclipse-temurin:17-jre-jammy`（非 Alpine），并在构建时 apt 安装 `ffmpeg` + `fontconfig`**，
 >   用于 GIF 动图导出。相比原来的 `17-jre-alpine` **镜像大约 170MB**（jammy 底座 + ffmpeg 及其依赖）。

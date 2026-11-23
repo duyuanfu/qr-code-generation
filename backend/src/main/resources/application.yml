@@ -16,12 +16,19 @@ spring:
     name: qr-studio-backend
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://localhost:3306/qr_studio?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true&allowPublicKeyRetrieval=true&useSSL=false
+    # 主机/端口/库名全部来自环境变量，连接串在这里拼一次：
+    #   - 本地直接跑：不设变量 → localhost:3306/qr_studio
+    #   - 容器里：compose 注入 DB_HOST=shared-mysql 等五项
+    # 刻意**不带** createDatabaseIfNotExist：共享实例上的专用账号只有本库权限，
+    # 没有 CREATE DATABASE 的全局权限，库必须由运维预先建好（见 docs/migrate-to-shared-mysql.md 步骤 2）。
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:qr_studio}?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
     # 口令只从环境变量读取，不设回退值：缺失时启动直接失败，避免带着默认口令上线。
     # 本地开发的默认值在 application-dev.yml（用 --spring.profiles.active=dev 启用）。
-    username: ${DB_USERNAME:root}
+    username: ${DB_USER:root}
     password: ${DB_PASSWORD}
     hikari:
+      # 共享实例的 max_connections 通常只有 120（多个业务共用），
+      # 单实例 15 已经够用：慢查询主要在上传与 GIF 渲染，不在连接数上。
       maximum-pool-size: 15
       minimum-idle: 5
       connection-timeout: 30000

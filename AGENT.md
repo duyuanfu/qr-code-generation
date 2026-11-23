@@ -35,7 +35,9 @@ qr-code-generation/
 ├── frontend/          # Next.js 14 App Router（只负责 UI 与 SSR 落地页）
 ├── backend/           # Spring Boot 3.2.5 + MyBatis-Plus + MySQL 8
 ├── openspec/          # 需求与变更工件（Spec-Driven 流程）
-├── docker-compose.yml # mysql + backend + frontend 三服务编排
+├── scripts/           # e2e 联调脚本 + 迁移脚本（migrate-to-shared-mysql.sh）
+├── docs/              # 运维手册（共享 MySQL 迁移等）
+├── docker-compose.yml # backend + frontend 编排；数据库在宿主机的 shared-mysql 上，不在本项目里
 └── AGENT.md
 ```
 
@@ -892,7 +894,9 @@ spring:
 #    GIF 导出还需要 ffmpeg 在 PATH 里（Windows: winget install Gyan.FFmpeg，或从 gyan.dev 下 zip 解压加 PATH）
 #    没有 ffmpeg 不影响站点其它功能，只是 /gif 会 500，启动日志里有一条 ERROR
 
-# 1) 数据库：需要一个 MySQL 8，库名 qr_studio（JDBC 串带 createDatabaseIfNotExist=true）
+# 1) 数据库：本地一个 MySQL 8 就够，不需要预建库
+#    dev profile 的 JDBC 串带 createDatabaseIfNotExist=true，会自动建 qr_studio
+#    （生产/容器不带这个参数，因为共享实例上的专用账号没有 CREATE DATABASE 权限）
 
 # 2) 后端（:8080，启动即建表 + 种子管理员）
 #    dev profile 提供本地口令与模拟支付开关；不带 profile 时必须显式给环境变量
@@ -915,7 +919,8 @@ cd frontend && npm install && npm run dev
 
 | 变量 | 用途 | 本地开发 |
 |---|---|---|
-| `DB_PASSWORD` | MySQL 口令（用户名 `DB_USERNAME`，默认 root） | `application-dev.yml` 里 `root` |
+| `DB_HOST` / `DB_PORT` / `DB_NAME` | 数据库地址与库名，默认 `localhost` / `3306` / `qr_studio`；容器里由 compose 注入 `shared-mysql` | 不设，走默认值 |
+| `DB_USER` / `DB_PASSWORD` | 数据库账号；口令无回退值 | `application-dev.yml` 里 `root/root` |
 | `JWT_SECRET` | 签名密钥，≥32 字节 | `application-dev.yml` 里的固定 dev 串 |
 | `ADMIN_PASSWORD` | 首次启动种子化管理员的口令 | `application-dev.yml` 里 |
 | `MOCK_PAY_ENABLED` | 模拟支付，**默认 false** | dev profile 里 `true` |
@@ -926,19 +931,54 @@ cd frontend && npm install && npm run dev
 一键编排（需要 Docker）：
 
 ```bash
-cp .env.example .env   # 必须填 MYSQL_ROOT_PASSWORD / JWT_SECRET / ADMIN_PASSWORD
+cp .env.example .env   # 必须填 DB_USER / DB_PASSWORD / JWT_SECRET / ADMIN_PASSWORD
+docker network create shared-net   # 宿主机一次性创建；已存在会报错，忽略
 docker compose up -d --build
 ```
 
-`docker-compose.yml` 里这三项用 `${VAR:?提示}` 写法，缺变量时 compose 直接报错退出，
+`docker-compose.yml` 里这几项用 `${VAR:?提示}` 写法，缺变量时 compose 直接报错退出，
 容器根本不会起来。
 
-- 服务：`mysql:3306`（healthcheck）+ `backend:8080` + `frontend:3001`
+- 服务：`backend:8080` + `frontend:3001`。**本项目不再自带 MySQL**，见下节
 - 上传卷统一挂到 `./backend/data/uploads`，与本地开发路径一致（两套路径会丢文件）
 - `frontend/Dockerfile` 三阶段 standalone；`backend/Dockerfile` maven → **`17-jre-jammy` + apt 装 ffmpeg/fontconfig**（GIF 导出用，见 §5.6）。
   原来是不装任何包的 `17-jre-alpine`，**换底座的原因是 Alpine 上 AWT 画不出中文**，不是嫌 apk 慢。
   `apt` 源通过 `ARG APT_MIRROR`（默认阿里云）改写，国内构建不至于卡在 `archive.ubuntu.com`；
   该 arg 已接到 `docker-compose.yml` 的 `backend.build.args`。
+
+### 共享 MySQL（`shared-mysql`）
+
+单台小规格主机上跑多个业务时，每项目一个 MySQL 容器会把内存吃干：每个实例光 InnoDB 缓冲池 +
+系统线程就要 300~400MB。所以数据库统一收归宿主机上的公共实例 `/opt/shared-infra/mysql`（容器名
+`shared-mysql`），本项目只保留「库 + 专用账号」这一层隔离。
+
+| 项 | 值 |
+|---|---|
+| 网络 | `shared-net`（`external: true`）。backend 同时挂 `default`（给 frontend 访问）和 `shared-net`（连库） |
+| 主机名 | `shared-mysql`，端口 `3306`，**不映射到宿主机**，公网无法直连 |
+| 库 / 账号 | `qr_studio` / `qr_studio_user@'%'`，只授权 `qr_studio.*` |
+| 连接参数 | 后端按 `DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD` 拼 JDBC 串（`application.yml`），换实例只改 `.env` |
+
+两个容易踩的点：
+
+- **生产 URL 不能带 `createDatabaseIfNotExist=true`**。共享实例上的专用账号只有本库权限，
+  没有 `CREATE DATABASE` 的全局权限，带上它会在启动时报 `CREATE DATABASE ... denied`，
+  而且报错位置离「库没建」很远，很难查。这个参数只留在 `application-dev.yml`。
+- **账号必须是 `'user'@'%'`**：容器间走网桥，来源 IP 是 `172.x.x.x` 而不是环回，写成 `@'localhost'` 会 `Access denied`。
+
+**已有历史数据的迁移**（原来用自带 `qr-studio-mysql` 的）：按指南第四节的无损流程走，
+本项目把它落成了可执行脚本，步骤与回滚见 `docs/migrate-to-shared-mysql.md`：
+
+```bash
+OLD_ROOT_PASSWORD='旧口令' SHARED_ROOT_PASSWORD='共享口令' \
+  ./scripts/migrate-to-shared-mysql.sh prepare   # 导数据 + 建库建号 + 导入 + 行数比对（线上无感）
+OLD_ROOT_PASSWORD='旧口令' SHARED_ROOT_PASSWORD='共享口令' \
+  ./scripts/migrate-to-shared-mysql.sh switch    # 停写 → 补增量 → 严格校验 → 起新栈 → 冒烟
+```
+
+> 比指南多做了一步「切流前再导一次」：指南是先导后切，中间那段窗口里的写入会丢。
+> 这是付费业务（订单、活码），丢一条订单就是一次纠纷，所以停写后再补一次全量导入。
+> 行数校验也没用指南里的 `information_schema.table_rows` —— 那是估算值，会制造假警报，脚本用精确 `COUNT(*)`。
 
 > ⚠️ 若后端启动后监听的**不是 8080**，先查环境变量：Spring 的宽松绑定会把 `SERVER__PORT` / `SERVER_PORT` 也当成 `server.port`。某些 IDE / Agent 沙箱会注入这类变量，命令行参数 `--server.port=8080` 优先级最高，可强制覆盖。
 

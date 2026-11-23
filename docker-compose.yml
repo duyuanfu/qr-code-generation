@@ -9,7 +9,7 @@ services:
     restart: unless-stopped
     environment:
       # ===== 共享 MySQL =====
-      # 宿主机上由 /opt/shared-infra 统一维护的 shared-mysql 容器（见 docs/migrate-to-shared-mysql.md）。
+      # 宿主机上由 /opt/shared-infra 统一维护的 shared-mysql 容器。
       # 主机名直接写容器名，走 shared-net 内部 DNS，3306 不暴露到公网。
       # 连接串由后端按这五个变量拼装（application.yml），换实例只改 .env，不用动代码。
       DB_HOST: ${DB_HOST:-shared-mysql}

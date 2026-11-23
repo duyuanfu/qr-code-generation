@@ -123,8 +123,7 @@ http://localhost:3001
 通过 `shared-net` 这个 Docker 网络按容器名互相访问，3306 不暴露到公网。
 
 > 公共实例怎么搭：见《Docker 多服务共享 MySQL 部署与接入通用指南》第二节（`/opt/shared-infra/mysql`）。
-> **本项目已有历史数据、原来用的是自带 MySQL 容器**：不要删库重建，按
-> [`docs/migrate-to-shared-mysql.md`](docs/migrate-to-shared-mysql.md) 一条命令迁移（停写 → 导出 → 建库建号 → 导入校验 → 起新栈，全程可回滚）。
+> 本项目的库与账号已经建好在 `shared-mysql` 上，首次部署不需要再动数据库，只填 `.env` 即可。
 
 ### 1. 克隆代码到服务器
 
@@ -176,7 +175,7 @@ docker compose up -d --build
 >   （指南第五节：每日 3:30 全库 dump）。上传的文件仍然挂载到宿主机 `./backend/data/uploads`。
 > - backend 同时接入项目默认网络与 `shared-net`：前者供 frontend 访问 `backend:8080`，后者用于连库。
 > - 表结构由 `schema.sql` 在启动时幂等创建（`CREATE TABLE IF NOT EXISTS` + `INSERT IGNORE`），
->   迁移过来的库上重复执行也不会改动已有数据。
+>   已有的库上重复执行也不会改动已有数据。
 > - 前端镜像构建时通过 `ARG BACKEND_URL` 写入代理目标（rewrites 在构建期固化，运行时改环境变量无效）。
 > - **后端镜像底座为 `eclipse-temurin:17-jre-jammy`（非 Alpine），并在构建时 apt 安装 `ffmpeg` + `fontconfig`**，
 >   用于 GIF 动图导出。相比原来的 `17-jre-alpine` **镜像大约 170MB**（jammy 底座 + ffmpeg 及其依赖）。

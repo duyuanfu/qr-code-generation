@@ -35,8 +35,7 @@ qr-code-generation/
 ├── frontend/          # Next.js 14 App Router（只负责 UI 与 SSR 落地页）
 ├── backend/           # Spring Boot 3.2.5 + MyBatis-Plus + MySQL 8
 ├── openspec/          # 需求与变更工件（Spec-Driven 流程）
-├── scripts/           # e2e 联调脚本 + 迁移脚本（migrate-to-shared-mysql.sh）
-├── docs/              # 运维手册（共享 MySQL 迁移等）
+├── scripts/           # e2e 联调脚本
 ├── docker-compose.yml # backend + frontend 编排；数据库在宿主机的 shared-mysql 上，不在本项目里
 └── AGENT.md
 ```
@@ -966,19 +965,10 @@ docker compose up -d --build
   而且报错位置离「库没建」很远，很难查。这个参数只留在 `application-dev.yml`。
 - **账号必须是 `'user'@'%'`**：容器间走网桥，来源 IP 是 `172.x.x.x` 而不是环回，写成 `@'localhost'` 会 `Access denied`。
 
-**已有历史数据的迁移**（原来用自带 `qr-studio-mysql` 的）：按指南第四节走，
-本项目落成了一行命令，步骤与回滚见 `docs/migrate-to-shared-mysql.md`：
-
-```bash
-# .env 里填好 DB_* 五项与 MYSQL_ROOT_PASSWORD（旧容器口令）
-SHARED_ROOT_PASSWORD='共享实例 root 口令' ./scripts/migrate-to-shared-mysql.sh
-#   停写 → 导旧库 → 建库建号 → 导入 → 精确 COUNT(*) 比对 → 起新栈 → 冒烟
-```
-
-> 只有一处与指南不同：**先停写再导出**（指南是先导后切）。中间那几秒的写入会丢，
-> 而这是付费业务（订单、活码），丢一条就是纠纷；停写窗口因此从「几乎为零」变成「一次导出 + 导入」，仍是秒级。
-> 行数校验也没用指南里的 `information_schema.table_rows` —— 那是估算值，会制造假警报，脚本用精确 `COUNT(*)`。
-> 库名/账号不需要外部分配，脚本自己建（默认 `qr_studio` / `qr_studio_user@'%'`），换名字只改 `.env`。
+**库与账号**：`qr_studio` / `qr_studio_user@'%'` 已在 `shared-mysql` 上建好，只授权本库。
+2026-11 之前本项目自带 `qr-studio-mysql` 容器，已整体迁到共享实例：`mysqldump --single-transaction`
+导出 → 导入 → 逐表 `COUNT(*)` 比对通过。一次性迁移脚本随迁移结束删除，
+需要时从历史取：`git show 4f49081:scripts/migrate-to-shared-mysql.sh`。
 
 > ⚠️ 若后端启动后监听的**不是 8080**，先查环境变量：Spring 的宽松绑定会把 `SERVER__PORT` / `SERVER_PORT` 也当成 `server.port`。某些 IDE / Agent 沙箱会注入这类变量，命令行参数 `--server.port=8080` 优先级最高，可强制覆盖。
 

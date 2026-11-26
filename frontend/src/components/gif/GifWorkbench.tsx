@@ -458,6 +458,53 @@ const ResultCard: React.FC<{ result: GenerateResult; onRegenerate: () => void }>
   const attempts = meta.attempts ?? [];
   const warnings = meta.warnings ?? [];
 
+  const [downloading, setDownloading] = useState(false);
+  const [downloaded, setDownloaded] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+
+  /** 存成 qr-gif-<订单号>.gif；拿不到名字也有兜底 */
+  const fileName = useMemo(() => {
+    const base = result.url.split('?')[0].split('/').pop() ?? '';
+    return base.toLowerCase().endsWith('.gif') ? `qr-gif-${base}` : 'qr-gif.gif';
+  }, [result.url]);
+
+  /**
+   * 点击时自己取数据再存盘，而不是让浏览器按 `<a download>` 处理。
+   *
+   * <p>原生 download 有两个坑：一是某些环境（浏览器策略 / 被忽略的 download）
+   * 会**什么都不做也不报错**，用户只看到「点了没反应」；二是失败时没有任何反馈，
+   * 没法区分「文件不存在」「被拦截」「网络断了」。fetch 拿得到状态码与体积，
+   * 失败能直接把原因写在按钮下面。
+   */
+  const handleDownload = async (e: React.MouseEvent<HTMLAnchorElement>) => {
+    e.preventDefault();
+    if (downloading) return;
+    setDownloading(true);
+    setDownloadError(null);
+    setDownloaded(false);
+    try {
+      const res = await fetch(result.url, { credentials: 'same-origin' });
+      if (!res.ok) throw new Error(`服务返回 HTTP ${res.status}`);
+      const blob = await res.blob();
+      if (blob.size === 0) throw new Error('文件是空的');
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      // 立刻 revoke 会让部分浏览器（Safari）拿不到数据，留一分钟
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+      setDownloaded(true);
+      setTimeout(() => setDownloaded(false), 6000);
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   return (
     <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4">
       <div className="flex items-center gap-2">
@@ -507,13 +554,20 @@ const ResultCard: React.FC<{ result: GenerateResult; onRegenerate: () => void }>
       ))}
 
       <div className="mt-3 flex gap-2">
+        {/* 保留 href + download：没有 JS 时仍能右键「链接另存为」 */}
         <a
           href={result.url}
-          download
+          download={fileName}
+          onClick={handleDownload}
+          aria-busy={downloading}
           className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg bg-emerald-600 text-xs font-semibold text-white transition-colors hover:bg-emerald-700"
         >
-          <Download className="h-3.5 w-3.5" aria-hidden="true" />
-          下载 GIF
+          {downloading ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+          ) : (
+            <Download className="h-3.5 w-3.5" aria-hidden="true" />
+          )}
+          {downloading ? '正在下载…' : '下载 GIF'}
         </a>
         <Button
           variant="outline"
@@ -525,6 +579,23 @@ const ResultCard: React.FC<{ result: GenerateResult; onRegenerate: () => void }>
           再生成一版
         </Button>
       </div>
+
+      {downloaded && (
+        <p className="mt-2 text-[11px] leading-relaxed text-emerald-700">
+          已开始下载：{fileName}（在浏览器右上角的下载列表里可以看到）。
+        </p>
+      )}
+
+      {downloadError && (
+        <p className="mt-2 text-[11px] leading-relaxed text-rose-700">
+          下载失败：{downloadError}。可以直接右键下方动图选「图片另存为」，
+          或把{' '}
+          <a href={result.url} target="_blank" rel="noreferrer" className="underline">
+            这个链接
+          </a>{' '}
+          发给我们排查。
+        </p>
+      )}
       <p className="mt-2 text-[10px] leading-relaxed text-slate-500">
         再生成需要重新下单（每次生成单独扣费）。文件保留 7 天，请及时下载保存。
       </p>

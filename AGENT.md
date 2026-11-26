@@ -737,6 +737,11 @@ brief 的 0.42 / 0.30 是浅底素材上的结论。换到「白底 + 深色主�
 - `GifCleanupTask`（每天 04:30）清两类垃圾：`{uploadDir}/.gif-tmp/*` 超过 **1 小时**（渲染中途被 kill 留下的帧序列，一次 30~60MB）、
   `{uploadDir}/gif/*.gif` 超过 **7 天**。⚠️ 产物 7 天就没了，而订单 `result_url` 是永久的 ——
   用户第 8 天回来点下载会 404，界面上要能兜住这个预期（目前是「文件保留 7 天」的文案提示）。
+- 前端「下载 GIF」走 **`fetch` → `Blob` → `URL.createObjectURL` → 临时 `<a download>`**
+  （`GifWorkbench.tsx` 的 `handleDownload`），**不要退回裸的 `<a href download>`**：
+  原生 download 在部分环境（浏览器策略 / 被忽略的 `download`）会**点了什么都不发生也不报错**，
+  失败时也分不清 404、被拦截、还是断网。fetch 拿得到状态码与体积，非 2xx 或 0 字节时
+  直接把原因写在按钮下方，并给「右键动图另存为」的兜底路径。
 
 ---
 

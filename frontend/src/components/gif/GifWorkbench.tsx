@@ -210,9 +210,18 @@ export const GifWorkbench: React.FC = () => {
         }
         const check = pre.data;
         if (check && !check.ok) {
-          setSuggestionReason(check.reason);
-          setSuggestion(check.suggestion);
-          setError(null);
+          if (check.suggestion) {
+            setSuggestionReason(check.reason);
+            setSuggestion(check.suggestion);
+            setError(null);
+          } else {
+            // 没有建议值 = 参数救不回来（多半是素材本身的问题），必须把原因显示出来。
+            // 旧写法是 setSuggestion(null) 配 setError(null)：suggestion 为空的提示卡不渲染、
+            // 错误框也是空的，于是整个界面什么都不出现 —— 用户看到的就是「点了一下，没反应、也不下载」。
+            setSuggestion(null);
+            setSuggestionReason(null);
+            setError(check.reason || '当前参数扫不出来，也没有可用的替代参数，请换一套素材再试');
+          }
           return;
         }
       } finally {

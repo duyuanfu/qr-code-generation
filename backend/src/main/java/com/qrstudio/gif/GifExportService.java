@@ -50,6 +50,14 @@ public class GifExportService {
      */
     private static final int QR_SOURCE_SIDE = 1200;
 
+    /**
+     * 二维码边长的上限（800 基准下的 px），与 {@link GifOptions#normalize()} 的夹取区间一致。
+     *
+     * <p>probe 往上放码时不能越过它 —— 越过了 normalize 也会拉回来，
+     * 结果是「建议值」和「实际生效值」不一致。
+     */
+    private static final int QR_SIZE_MAX = 560;
+
     private final GifRenderService renderService;
     private final QrScanVerifier verifier;
     private final OrderMapper orderMapper;
@@ -96,6 +104,18 @@ public class GifExportService {
                 return new PrecheckResult(true, null, null, System.currentTimeMillis() - start);
             }
 
+            // 底图本身就是一张二维码（或里面印着一张码）：两张码叠在一起，
+            // 扫码器只会认出其中一张，参数怎么调都救不回来，必须单独把话说清楚 ——
+            // 否则用户会对着「四角定位图案过淡」反复调参数，调到上限也还是这句话。
+            //
+            // 判据放在 nativeOk == false 之后：底图里带个小码、主体仍是照片时，
+            // 合成后照样能扫，不该误报。这一步也就多一次 ZXing 解码，只在失败路径上跑。
+            if (!report.nativeOk() && verifier.decodable(bg)) {
+                return new PrecheckResult(false,
+                        "底图里已经有一张二维码，两张码叠在一起扫码时只会认出其中一张，请换一张照片或插画作底图",
+                        null, System.currentTimeMillis() - start);
+            }
+
             Suggestion suggestion = probe(opts, bg, qr);
             return new PrecheckResult(false, report.reason(), suggestion, System.currentTimeMillis() - start);
         } finally {
@@ -114,7 +134,6 @@ public class GifExportService {
      *
      * <p>顺序与回退顺序一致：先抬四角系数（对画面观感影响最小，只是定位图案稍实一点），
      * 再抬整体不透明度（会让二维码更显眼），最后才放大二维码（会破坏构图）。
-     * 三档都过不了就不再猜了 —— 说明问题不在参数，而在素材本身。
      */
     private Suggestion probe(GifOptions opts, BufferedImage bg, BufferedImage qr) {
         double[][] tiers = {
@@ -128,6 +147,30 @@ public class GifExportService {
             trial.setQrOpacity(tier[1]);
             if (renderLastFrame(trial, bg, qr).allPass()) {
                 return new Suggestion(round2(tier[0]), round2(tier[1]), trial.getQrSize());
+            }
+        }
+
+        // 三档颜色都救不回来，就动构图：放大二维码。
+        //
+        // 这一档必须存在。密集码（微信个人码、长链接生成的码）在 320px 上单模块只有 5~6px，
+        // 缩到 640/480 再糊一遍就散了 —— 颜色抬到顶（1.0/1.0）都过不了，放大到 400 就能过。
+        // 以前这里直接 return null，于是前端「一键应用建议值」永远不出现，
+        // 用户被卡在一个没有任何出路的状态里（旧前端在 suggestion 为空时还会静默，连提示都不显示）。
+        int base = opts.getQrSize();
+        for (int bump : new int[]{40, 80, 120}) {
+            int size = Math.min(QR_SIZE_MAX, base + bump);
+            if (size <= base) {
+                break;
+            }
+            GifOptions trial = opts.copy();
+            trial.setCornerMult(1.0);
+            trial.setQrOpacity(1.0);
+            trial.setQrSize(size);
+            if (renderLastFrame(trial, bg, qr).allPass()) {
+                return new Suggestion(1.0, 1.0, size);
+            }
+            if (size >= QR_SIZE_MAX) {
+                break;
             }
         }
         return null;
